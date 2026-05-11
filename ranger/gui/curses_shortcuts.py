@@ -29,15 +29,21 @@ class ColorAdapter(object):
 
     def __init__(self, colorscheme):
         self._colorscheme = colorscheme
+        self._get_attr_cache = {}
 
-    @cached_function
     def get_attr(self, *keys):
         """Returns the curses attribute for the specified keys
 
         Ready to use for curses.setattr()
         """
-        fg, bg, attr = self._colorscheme.get(*flatten(keys))
-        return attr | curses.color_pair(get_color(fg, bg))
+        cache_key = tuple(flatten(keys))
+        if cache_key in self._get_attr_cache:
+            return self._get_attr_cache[cache_key]
+
+        fg, bg, attr = self._colorscheme.get(*cache_key)
+        result = attr | curses.color_pair(get_color(fg, bg))
+        self._get_attr_cache[cache_key] = result
+        return result
 
 
 class CursesShortcuts(SettingsAware):

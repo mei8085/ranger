@@ -139,10 +139,11 @@ class TestColorAdapterRendering:
         scheme = TestScheme()
         adapter = ColorAdapter(scheme)
 
-        try:
-            adapter.get_attr(['directory', ['selected', 'marked']])
-        except Exception:
-            pass
+        adapter.get_attr(['directory', ['selected', 'marked']])
+
+        assert 'directory' in scheme.received_keys
+        assert 'selected' in scheme.received_keys
+        assert 'marked' in scheme.received_keys
 
     def test_coloradapter_caches_results(self):
         """ColorAdapter.get_attr should cache results for performance."""
@@ -159,17 +160,14 @@ class TestColorAdapterRendering:
         scheme = CountingScheme()
         adapter = ColorAdapter(scheme)
 
-        try:
-            adapter.get_attr('test')
-            first_count = call_count[0]
+        adapter.get_attr('test')
+        first_count = call_count[0]
 
-            adapter.get_attr('test')
-            second_count = call_count[0]
+        adapter.get_attr('test')
+        second_count = call_count[0]
 
-            assert second_count == first_count, \
-                "get_attr should cache results - use() should not be called twice"
-        except Exception:
-            pass
+        assert second_count == first_count, \
+            "get_attr should cache results - use() should not be called twice"
 
 
 class TestDefaultThemeBehavior:

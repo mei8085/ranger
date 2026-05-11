@@ -35,11 +35,8 @@ class TestColorAdapterBehaviorConsistency:
         scheme = TestScheme()
         adapter = ColorAdapter(scheme)
 
-        try:
-            adapter.get_attr('test')
-            assert get_call_count[0] >= 1
-        except Exception:
-            pass
+        adapter.get_attr('test')
+        assert get_call_count[0] >= 1
 
     def test_coloradapter_passes_all_keys(self):
         """ColorAdapter should pass all keys to colorscheme.get()."""
@@ -61,19 +58,19 @@ class TestColorAdapterBehaviorConsistency:
 
         test_keys = ('in_browser', 'directory', 'selected', 'marked')
 
-        try:
-            adapter.get_attr(*test_keys)
-            assert received_keys[0] == test_keys
-        except Exception:
-            pass
+        adapter.get_attr(*test_keys)
+        assert received_keys[0] == test_keys
 
     def test_coloradapter_handles_flattened_keys(self):
         """ColorAdapter should handle nested key structures (flattening)."""
         from ranger.gui.curses_shortcuts import ColorAdapter
         from ranger.gui.colorscheme import ColorScheme
 
+        received_keys = [None]
+
         class TestScheme(ColorScheme):
             def get(self, *keys):
+                received_keys[0] = keys
                 return (1, 2, 3)
 
             def use(self, context):
@@ -82,11 +79,9 @@ class TestColorAdapterBehaviorConsistency:
         scheme = TestScheme()
         adapter = ColorAdapter(scheme)
 
-        try:
-            result = adapter.get_attr(['directory', ['selected', 'marked']])
-            assert isinstance(result, int)
-        except Exception:
-            pass
+        result = adapter.get_attr(['directory', ['selected', 'marked']])
+        assert isinstance(result, int)
+        assert received_keys[0] == ('directory', 'selected', 'marked')
 
 
 class TestThemeBackwardCompatibility:
