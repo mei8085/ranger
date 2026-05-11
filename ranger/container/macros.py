@@ -50,7 +50,8 @@ class Macros(FileManagerAware):
             self.dct[name] = keys
             if self.autosave:
                 self.save()
-        return name
+            return name
+        return None
 
     def record_key(self, key):
         if self.recording:
@@ -112,12 +113,22 @@ class Macros(FileManagerAware):
         try:
             if os.path.exists(self.path):
                 old_perms = os.stat(self.path)
-                os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
-                os.chmod(path_new, old_perms.st_mode)
+                try:
+                    os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
+                except (AttributeError, OSError):
+                    pass
+                try:
+                    os.chmod(path_new, old_perms.st_mode)
+                except OSError:
+                    pass
                 if os.path.islink(self.path):
                     target_path = os.path.realpath(self.path)
+                    if os.path.exists(target_path):
+                        os.remove(target_path)
                     os.rename(path_new, target_path)
                 else:
+                    if os.path.exists(self.path):
+                        os.remove(self.path)
                     os.rename(path_new, self.path)
             else:
                 os.rename(path_new, self.path)
