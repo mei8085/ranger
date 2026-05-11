@@ -28,15 +28,12 @@ from __future__ import (absolute_import, division, print_function)
 
 import os.path
 from abc import abstractmethod
-from curses import color_pair
 from io import open
 
 import ranger
-from ranger.gui.color import get_color
 from ranger.gui.context import Context
 from ranger.core.main import allow_access_to_confdir
 from ranger.ext.cached_function import cached_function
-from ranger.ext.iter_tools import flatten
 
 
 class ColorSchemeError(Exception):
@@ -63,15 +60,6 @@ class ColorScheme(object):
             raise ValueError("Bad Value from colorscheme.  Need "
                              "a tuple of (foreground_color, background_color, attribute).")
         return color
-
-    @cached_function
-    def get_attr(self, *keys):
-        """Returns the curses attribute for the specified keys
-
-        Ready to use for curses.setattr()
-        """
-        fg, bg, attr = self.get(*flatten(keys))
-        return attr | color_pair(get_color(fg, bg))
 
     @abstractmethod
     def use(self, context):

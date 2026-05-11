@@ -7,6 +7,8 @@ import sys
 import curses
 
 from ranger.gui.color import get_color
+from ranger.ext.cached_function import cached_function
+from ranger.ext.iter_tools import flatten
 from ranger.core.shared import SettingsAware
 
 REVERSE_ADDCH_ARGS = sys.version[0:5] == '3.4.0'
@@ -15,6 +17,27 @@ REVERSE_ADDCH_ARGS = sys.version[0:5] == '3.4.0'
 def _fix_surrogates(args):
     return [isinstance(arg, str) and arg.encode('utf-8', 'surrogateescape')
             .decode('utf-8', 'replace') or arg for arg in args]
+
+
+class ColorAdapter(object):
+    """Adapts colorscheme colors to curses attributes.
+
+    This is the rendering adapter layer that converts the abstract color
+    representation (fg, bg, attr) from colorscheme models to curses
+    attributes ready for rendering.
+    """
+
+    def __init__(self, colorscheme):
+        self._colorscheme = colorscheme
+
+    @cached_function
+    def get_attr(self, *keys):
+        """Returns the curses attribute for the specified keys
+
+        Ready to use for curses.setattr()
+        """
+        fg, bg, attr = self._colorscheme.get(*flatten(keys))
+        return attr | curses.color_pair(get_color(fg, bg))
 
 
 class CursesShortcuts(SettingsAware):
@@ -29,6 +52,7 @@ class CursesShortcuts(SettingsAware):
 
     def __init__(self):
         self.win = None
+        self._color_adapter = None
 
     def addstr(self, *args):
         y, x = self.win.getyx()
@@ -68,9 +92,16 @@ class CursesShortcuts(SettingsAware):
         except (curses.error, TypeError):
             pass
 
+    def _get_color_adapter(self):
+        if self._color_adapter is None or \
+                self._color_adapter._colorscheme is not self.settings.colorscheme:
+            self._color_adapter = ColorAdapter(self.settings.colorscheme)
+        return self._color_adapter
+
     def color(self, *keys):
         """Change the colors from now on."""
-        attr = self.settings.colorscheme.get_attr(*keys)
+        adapter = self._get_color_adapter()
+        attr = adapter.get_attr(*keys)
         try:
             self.win.attrset(attr)
         except curses.error:
@@ -78,7 +109,8 @@ class CursesShortcuts(SettingsAware):
 
     def color_at(self, y, x, wid, *keys):
         """Change the colors at the specified position"""
-        attr = self.settings.colorscheme.get_attr(*keys)
+        adapter = self._get_color_adapter()
+        attr = adapter.get_attr(*keys)
         try:
             self.win.chgat(y, x, wid, attr)
         except curses.error:
