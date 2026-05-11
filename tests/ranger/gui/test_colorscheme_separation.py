@@ -11,8 +11,6 @@ Verifies that:
 
 from __future__ import (absolute_import, division, print_function)
 
-import pytest
-
 
 class TestColorSchemeIndependence:
     """Verify ColorScheme is decoupled from curses rendering."""

@@ -36,16 +36,9 @@ except ImportError:
 
     mock_curses_module.error = Exception
 
-    color_pair_cache = {}
     mock_curses_module.color_pair = mock.MagicMock(side_effect=lambda n: n << 8)
-
-    def mock_init_pair(pair, fg, bg):
-        color_pair_cache[(fg, bg)] = pair
-
-    mock_curses_module.init_pair = mock.MagicMock(side_effect=mock_init_pair)
-
+    mock_curses_module.init_pair = mock.MagicMock()
     mock_curses_module.tigetnum = mock.MagicMock(return_value=16)
-
     mock_curses_module.setupterm = mock.MagicMock()
 
     sys.modules['curses'] = mock_curses_module

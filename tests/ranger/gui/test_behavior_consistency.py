@@ -10,8 +10,6 @@ These tests ensure that:
 
 from __future__ import (absolute_import, division, print_function)
 
-import pytest
-
 
 class TestColorAdapterBehaviorConsistency:
     """Verify ColorAdapter behavior matches expected behavior."""
