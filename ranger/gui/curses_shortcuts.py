@@ -7,7 +7,6 @@ import sys
 import curses
 
 from ranger.gui.color import get_color
-from ranger.ext.cached_function import cached_function
 from ranger.ext.iter_tools import flatten
 from ranger.core.shared import SettingsAware
 

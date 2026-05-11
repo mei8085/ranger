@@ -141,14 +141,9 @@ class TestThemeBackwardCompatibility:
         from ranger.colorschemes.default import Default
         from ranger.colorschemes.jungle import Scheme as Jungle
         from ranger.colorschemes.snow import Snow
+        from ranger.colorschemes.solarized import Solarized
 
-        themes = [Default(), Jungle(), Snow()]
-
-        try:
-            from ranger.colorschemes.solarized import Solarized
-            themes.append(Solarized())
-        except ImportError:
-            pass
+        themes = [Default(), Jungle(), Snow(), Solarized()]
 
         test_contexts = [
             ['in_browser'],

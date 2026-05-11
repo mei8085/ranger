@@ -562,8 +562,5 @@ class TestModuleImports:
         assert Jungle is not None
         assert Snow is not None
 
-        try:
-            from ranger.colorschemes.solarized import Solarized
-            assert Solarized is not None
-        except ImportError:
-            pass
+        from ranger.colorschemes.solarized import Solarized
+        assert Solarized is not None
