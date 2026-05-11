@@ -25,7 +25,7 @@ from ranger.api.commands import Command, CommandContainer, command_alias_factory
 from ranger.api.command_registry import CommandRegistry
 
 
-class MockFileManager:
+class _MockFileManager:
     """Mock file manager for testing."""
     def __init__(self):
         self.notifications = []
@@ -38,20 +38,20 @@ class MockFileManager:
         self.notifications = []
 
 
-class TestCommand(Command):
-    """Test command class."""
+class _SampleCommand(Command):
+    """Sample command class for testing."""
     def execute(self):
         pass
 
 
-class TestCommandNoAbbrev(Command):
-    """Test command that doesn't allow abbreviation."""
+class _SampleCommandNoAbbrev(Command):
+    """Sample command that doesn't allow abbreviation."""
     allow_abbrev = False
     name = 'test_no_abbrev'
 
 
-class AnotherTestCommand(Command):
-    """Another test command."""
+class _AnotherSampleCommand(Command):
+    """Another sample command for testing."""
     name = 'another_test'
 
 
@@ -64,7 +64,7 @@ class TestCommandRegistryBasics(unittest.TestCase):
         self.container = CommandContainer()
         
         # Set up mock file manager
-        self.fm = MockFileManager()
+        self.fm = _MockFileManager()
         self.registry.fm = self.fm
         self.container.fm = self.fm
     
@@ -85,10 +85,10 @@ class TestCommandRegistryBasics(unittest.TestCase):
     def test_getitem(self):
         """Test __getitem__ method."""
         # Register a command first
-        self.registry._commands['test'] = TestCommand
+        self.registry._commands['test'] = _SampleCommand
         
         # Test that we can access it via []
-        self.assertIs(self.registry['test'], TestCommand)
+        self.assertIs(self.registry['test'], _SampleCommand)
         
         # Test that it raises KeyError for non-existent commands
         with self.assertRaises(KeyError):
@@ -102,13 +102,13 @@ class TestCommandRegistration(unittest.TestCase):
         """Set up test fixtures."""
         self.registry = CommandRegistry()
         self.container = CommandContainer()
-        self.fm = MockFileManager()
+        self.fm = _MockFileManager()
         self.registry.fm = self.fm
         self.container.fm = self.fm
     
     def test_register_method(self):
         """Test the register method."""
-        self.registry.register('test_cmd', TestCommand)
+        self.registry.register('test_cmd', _SampleCommand)
         
         self.assertIn('test_cmd', self.registry.commands)
         self.assertIsNotNone(self.registry.get_command('test_cmd'))
@@ -117,12 +117,12 @@ class TestCommandRegistration(unittest.TestCase):
         """Test loading commands from a module."""
         # Create a mock module
         mock_module = Mock()
-        mock_module.TestCommand = TestCommand
-        mock_module.AnotherTestCommand = AnotherTestCommand
+        mock_module._SampleCommand = _SampleCommand
+        mock_module._AnotherSampleCommand = _AnotherSampleCommand
         mock_module.NotACommand = "not a command"
         mock_module.__dict__ = {
-            'TestCommand': TestCommand,
-            'AnotherTestCommand': AnotherTestCommand,
+            '_SampleCommand': _SampleCommand,
+            '_AnotherSampleCommand': _AnotherSampleCommand,
             'NotACommand': "not a command",
             'Command': Command  # Should be excluded
         }
@@ -130,7 +130,7 @@ class TestCommandRegistration(unittest.TestCase):
         self.registry.load_commands_from_module(mock_module)
         
         # Check that commands are loaded
-        self.assertIn('TestCommand', self.registry.commands)
+        self.assertIn('_SampleCommand', self.registry.commands)
         self.assertIn('another_test', self.registry.commands)
         
         # Check that non-commands are not loaded
@@ -141,7 +141,7 @@ class TestCommandRegistration(unittest.TestCase):
     
     def test_load_commands_from_object(self):
         """Test loading commands from an object."""
-        class TestObject:
+        class _TestObject:
             def method1(self):
                 pass
             def method2(self):
@@ -149,7 +149,7 @@ class TestCommandRegistration(unittest.TestCase):
             def _private_method(self):
                 pass
         
-        obj = TestObject()
+        obj = _TestObject()
         filtr = {'method1', 'method2', 'excluded'}
         
         self.registry.load_commands_from_object(obj, filtr)
@@ -172,25 +172,25 @@ class TestCommandLookup(unittest.TestCase):
         """Set up test fixtures."""
         self.registry = CommandRegistry()
         self.container = CommandContainer()
-        self.fm = MockFileManager()
+        self.fm = _MockFileManager()
         self.registry.fm = self.fm
         self.container.fm = self.fm
         
         # Register some test commands
-        self.registry._commands['test_command'] = TestCommand
-        self.registry._commands['test_no_abbrev'] = TestCommandNoAbbrev
-        self.registry._commands['another_test'] = AnotherTestCommand
+        self.registry._commands['test_command'] = _SampleCommand
+        self.registry._commands['test_no_abbrev'] = _SampleCommandNoAbbrev
+        self.registry._commands['another_test'] = _AnotherSampleCommand
         
-        self.container._commands['test_command'] = TestCommand
-        self.container._commands['test_no_abbrev'] = TestCommandNoAbbrev
-        self.container._commands['another_test'] = AnotherTestCommand
+        self.container._commands['test_command'] = _SampleCommand
+        self.container._commands['test_no_abbrev'] = _SampleCommandNoAbbrev
+        self.container._commands['another_test'] = _AnotherSampleCommand
     
     def test_get_command_exact_match(self):
         """Test exact command lookup."""
         # Test with exact match
         cmd = self.registry.get_command('test_command')
         self.assertIsNotNone(cmd)
-        self.assertEqual(cmd, TestCommand)
+        self.assertEqual(cmd, _SampleCommand)
         
         # Test with non-existent command
         cmd = self.registry.get_command('nonexistent')
@@ -201,11 +201,11 @@ class TestCommandLookup(unittest.TestCase):
         # Test with abbreviation that matches one command
         cmd = self.registry.get_command('test_com', abbrev=True)
         self.assertIsNotNone(cmd)
-        self.assertEqual(cmd, TestCommand)
+        self.assertEqual(cmd, _SampleCommand)
         
         # Test with abbreviation that matches exact name
         cmd = self.registry.get_command('test_command', abbrev=True)
-        self.assertEqual(cmd, TestCommand)
+        self.assertEqual(cmd, _SampleCommand)
         
         # Test with non-existent command (should raise KeyError)
         with self.assertRaises(KeyError):
@@ -217,7 +217,7 @@ class TestCommandLookup(unittest.TestCase):
         # But 'test_no_abbrev' has allow_abbrev=False, so it shouldn't match
         cmd = self.registry.get_command('test', abbrev=True)
         # Should return test_command since test_no_abbrev doesn't allow abbrev
-        self.assertEqual(cmd, TestCommand)
+        self.assertEqual(cmd, _SampleCommand)
     
     def test_get_command_no_abbrev(self):
         """Test that commands with allow_abbrev=False don't match abbreviations."""
@@ -228,7 +228,7 @@ class TestCommandLookup(unittest.TestCase):
         
         # But exact match should work
         cmd = self.registry.get_command('test_no_abbrev', abbrev=True)
-        self.assertEqual(cmd, TestCommandNoAbbrev)
+        self.assertEqual(cmd, _SampleCommandNoAbbrev)
 
 
 class TestCommandAlias(unittest.TestCase):
@@ -238,13 +238,13 @@ class TestCommandAlias(unittest.TestCase):
         """Set up test fixtures."""
         self.registry = CommandRegistry()
         self.container = CommandContainer()
-        self.fm = MockFileManager()
+        self.fm = _MockFileManager()
         self.registry.fm = self.fm
         self.container.fm = self.fm
         
         # Register a test command
-        self.registry._commands['test_command'] = TestCommand
-        self.container._commands['test_command'] = TestCommand
+        self.registry._commands['test_command'] = _SampleCommand
+        self.container._commands['test_command'] = _SampleCommand
     
     def tearDown(self):
         """Clean up after each test."""
@@ -265,8 +265,8 @@ class TestCommandAlias(unittest.TestCase):
         alias_class = self.registry.get_command('tc')
         self.assertIsNotNone(alias_class)
         
-        # Verify it's an alias of TestCommand
-        self.assertTrue(issubclass(alias_class, TestCommand))
+        # Verify it's an alias of _SampleCommand
+        self.assertTrue(issubclass(alias_class, _SampleCommand))
         
         # Verify no error notifications were generated
         self.assertEqual(len(self.fm.notifications), 0)
@@ -310,14 +310,14 @@ class TestCommandGenerator(unittest.TestCase):
         """Set up test fixtures."""
         self.registry = CommandRegistry()
         self.container = CommandContainer()
-        self.fm = MockFileManager()
+        self.fm = _MockFileManager()
         self.registry.fm = self.fm
         self.container.fm = self.fm
         
         # Register some test commands
-        self.registry._commands['alpha'] = TestCommand
-        self.registry._commands['beta'] = TestCommand
-        self.registry._commands['aleph'] = TestCommand
+        self.registry._commands['alpha'] = _SampleCommand
+        self.registry._commands['beta'] = _SampleCommand
+        self.registry._commands['aleph'] = _SampleCommand
     
     def test_command_generator(self):
         """Test command generator."""
@@ -355,8 +355,8 @@ class TestBehavioralConsistency(unittest.TestCase):
         """Set up test fixtures."""
         self.registry = CommandRegistry()
         self.container = CommandContainer()
-        self.fm_registry = MockFileManager()
-        self.fm_container = MockFileManager()
+        self.fm_registry = _MockFileManager()
+        self.fm_container = _MockFileManager()
         self.registry.fm = self.fm_registry
         self.container.fm = self.fm_container
     
@@ -390,8 +390,8 @@ class TestBehavioralConsistency(unittest.TestCase):
         self.assertEqual(len(self.fm_registry.notifications), 0)
         self.assertEqual(len(self.fm_container.notifications), 0)
         
-        self.registry._commands['test'] = TestCommand
-        self.container._commands['test'] = TestCommand
+        self.registry._commands['test'] = _SampleCommand
+        self.container._commands['test'] = _SampleCommand
         
         # Both should return the same value
         self.assertIs(self.registry['test'], self.container['test'])
@@ -412,8 +412,8 @@ class TestBehavioralConsistency(unittest.TestCase):
         self.assertEqual(len(self.fm_registry.notifications), 0)
         self.assertEqual(len(self.fm_container.notifications), 0)
         
-        self.registry._commands['test_cmd'] = TestCommand
-        self.container._commands['test_cmd'] = TestCommand
+        self.registry._commands['test_cmd'] = _SampleCommand
+        self.container._commands['test_cmd'] = _SampleCommand
         
         # Test exact match
         self.assertIs(
@@ -437,8 +437,8 @@ class TestBehavioralConsistency(unittest.TestCase):
         self.assertEqual(len(self.fm_registry.notifications), 0)
         self.assertEqual(len(self.fm_container.notifications), 0)
         
-        self.registry._commands['test_command'] = TestCommand
-        self.container._commands['test_command'] = TestCommand
+        self.registry._commands['test_command'] = _SampleCommand
+        self.container._commands['test_command'] = _SampleCommand
         
         # Test abbreviation
         self.assertIs(
@@ -482,10 +482,10 @@ class TestBehavioralConsistency(unittest.TestCase):
         self.assertEqual(len(self.fm_registry.notifications), 0)
         self.assertEqual(len(self.fm_container.notifications), 0)
         
-        self.registry._commands['alpha'] = TestCommand
-        self.registry._commands['beta'] = TestCommand
-        self.container._commands['alpha'] = TestCommand
-        self.container._commands['beta'] = TestCommand
+        self.registry._commands['alpha'] = _SampleCommand
+        self.registry._commands['beta'] = _SampleCommand
+        self.container._commands['alpha'] = _SampleCommand
+        self.container._commands['beta'] = _SampleCommand
         
         # Both should return the same results
         reg_result = list(self.registry.command_generator(''))
