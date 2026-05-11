@@ -208,6 +208,9 @@ class UI(  # pylint: disable=too-many-instance-attributes,too-many-public-method
         keybuffer = self.keybuffer
         self.status.clear_message()
 
+        if self.fm.macros.recording:
+            self.fm.macros.record_key(key)
+
         keybuffer.add(key)
         self.fm.hide_bookmarks()
         self.browser.draw_hints = not keybuffer.finished_parsing \

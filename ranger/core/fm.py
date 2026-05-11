@@ -22,6 +22,7 @@ import ranger.api
 from ranger.container import settings
 from ranger.container.bookmarks import Bookmarks
 from ranger.container.directory import Directory
+from ranger.container.macros import Macros
 from ranger.container.tags import Tags, TagsDummy
 from ranger.core.actions import Actions
 from ranger.core.loader import Loader
@@ -93,6 +94,7 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
         self.start_paths = paths if paths is not None else ['.']
         self.directories = {}
         self.bookmarks = bookmarks
+        self.macros = None
         self.current_tab = 1
         self.tabs = {}
         self.tags = tags
@@ -170,6 +172,13 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
             self.bookmarks.load()
             self.bookmarks.enable_saving_backtick_bookmark(
                 self.settings.save_backtick_bookmark)
+
+        if ranger.args.clean:
+            macrofile = None
+        else:
+            macrofile = self.datapath('macros.json')
+        self.macros = Macros(macrofile=macrofile, autosave=True)
+        self.macros.load()
 
         self.ui.setup_curses()
         self.ui.initialize()

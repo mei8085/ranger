@@ -2135,3 +2135,74 @@ class paste_ext(Command):
 
     def execute(self):
         return self.fm.paste(make_safe_path=paste_ext.make_safe_path)
+
+
+class macro_start(Command):
+    """:macro_start <name>
+
+    Start recording a macro with the given name.
+    """
+
+    def execute(self):
+        if not self.arg(1):
+            self.fm.notify('Usage: macro_start <name>', bad=True)
+            return
+        self.fm.macro_start(self.arg(1))
+
+
+class macro_stop(Command):
+    """:macro_stop
+
+    Stop recording the current macro.
+    """
+
+    def execute(self):
+        self.fm.macro_stop()
+
+
+class macro_play(Command):
+    """:macro_play <name>
+
+    Play back a recorded macro.
+    """
+
+    def execute(self):
+        if not self.arg(1):
+            self.fm.notify('Usage: macro_play <name>', bad=True)
+            return
+        self.fm.macro_play(self.arg(1))
+
+    def tab(self, tabnum):
+        start = self.start(1)
+        prefix = self.arg(1)
+        return [start + name for name in sorted(self.fm.macros.dct.keys())
+                if name.startswith(prefix)]
+
+
+class macro_delete(Command):
+    """:macro_delete <name>
+
+    Delete a recorded macro.
+    """
+
+    def execute(self):
+        if not self.arg(1):
+            self.fm.notify('Usage: macro_delete <name>', bad=True)
+            return
+        self.fm.macro_delete(self.arg(1))
+
+    def tab(self, tabnum):
+        start = self.start(1)
+        prefix = self.arg(1)
+        return [start + name for name in sorted(self.fm.macros.dct.keys())
+                if name.startswith(prefix)]
+
+
+class macro_list(Command):
+    """:macro_list
+
+    List all recorded macros.
+    """
+
+    def execute(self):
+        self.fm.macro_list()

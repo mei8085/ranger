@@ -1692,3 +1692,74 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.notify(err)
             return False
         return True
+
+    def macro_start(self, name):
+        """:macro_start <name>
+
+        Start recording a macro with the given name.
+        """
+        if self.fm.macros.recording:
+            self.notify('Already recording a macro!', bad=True)
+            return False
+        if not name:
+            self.notify('Macro name required!', bad=True)
+            return False
+        if self.fm.macros.start_recording(name):
+            self.notify('Recording macro: {0}'.format(name))
+            return True
+        return False
+
+    def macro_stop(self):
+        """:macro_stop
+
+        Stop recording the current macro.
+        """
+        if not self.fm.macros.recording:
+            self.notify('Not recording a macro!', bad=True)
+            return None
+        name = self.fm.macros.stop_recording()
+        if name:
+            self.notify('Saved macro: {0}'.format(name))
+        else:
+            self.notify('No keys recorded, macro not saved.')
+        return name
+
+    def macro_play(self, name):
+        """:macro_play <name>
+
+        Play back a recorded macro.
+        """
+        if self.fm.macros.recording:
+            self.notify('Cannot play macro while recording!', bad=True)
+            return False
+        keys = self.fm.macros.get(name)
+        if keys is None:
+            self.notify('Macro not found: {0}'.format(name), bad=True)
+            return False
+        self.fm.ui.handle_keys(*keys)
+        return True
+
+    def macro_delete(self, name):
+        """:macro_delete <name>
+
+        Delete a recorded macro.
+        """
+        if name not in self.fm.macros:
+            self.notify('Macro not found: {0}'.format(name), bad=True)
+            return False
+        del self.fm.macros[name]
+        self.notify('Deleted macro: {0}'.format(name))
+        return True
+
+    def macro_list(self):
+        """:macro_list
+
+        List all recorded macros.
+        """
+        macros = list(self.fm.macros)
+        if not macros:
+            self.notify('No macros recorded.')
+        else:
+            names = sorted(name for name, _ in macros)
+            self.notify('Macros: {0}'.format(', '.join(names)))
+        return macros
