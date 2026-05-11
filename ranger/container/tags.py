@@ -8,12 +8,92 @@ from __future__ import (absolute_import, division, print_function)
 import copy
 import os
 import string
+import sys
+import time
+from contextlib import contextmanager
 from io import open
 from os.path import exists, abspath, realpath, expanduser, sep
 
 from ranger.core.shared import FileManagerAware
 
 ALLOWED_KEYS = string.ascii_letters + string.digits + string.punctuation
+
+
+class FileLock(object):
+    """Cross-platform file lock for protecting concurrent access."""
+
+    def __init__(self, filename):
+        self._filename = filename
+        self._lock_filename = filename + '.lock'
+        self._lock_file = None
+        self._platform = sys.platform
+
+    @contextmanager
+    def acquire(self, exclusive=True, timeout=10, retry_interval=0.1):
+        """Acquire a file lock.
+
+        Args:
+            exclusive: If True, acquire exclusive (write) lock.
+                      If False, acquire shared (read) lock.
+            timeout: Maximum time to wait for lock in seconds.
+            retry_interval: Time between retries in seconds.
+        """
+        start_time = time.time()
+        lock_acquired = False
+
+        try:
+            while not lock_acquired:
+                try:
+                    self._lock_file = open(self._lock_filename, 'w')
+                    if self._platform == 'win32':
+                        import msvcrt
+                        if exclusive:
+                            msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                        else:
+                            msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_NBRLCK, 1)
+                    else:
+                        import fcntl
+                        lock_type = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                        fcntl.flock(self._lock_file.fileno(), lock_type | fcntl.LOCK_NB)
+                    lock_acquired = True
+                except (IOError, OSError, ImportError):
+                    if time.time() - start_time > timeout:
+                        raise RuntimeError(
+                            "Timeout waiting for file lock on %s" % self._filename
+                        )
+                    time.sleep(retry_interval)
+
+            yield
+        finally:
+            self._release()
+
+    def _release(self):
+        """Release the file lock."""
+        if self._lock_file is not None:
+            try:
+                if self._platform == 'win32':
+                    try:
+                        import msvcrt
+                        msvcrt.locking(self._lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    except (ImportError, IOError, OSError):
+                        pass
+                else:
+                    try:
+                        import fcntl
+                        fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+                    except (ImportError, IOError, OSError):
+                        pass
+            finally:
+                try:
+                    self._lock_file.close()
+                except (IOError, OSError):
+                    pass
+                self._lock_file = None
+                try:
+                    if exists(self._lock_filename):
+                        os.remove(self._lock_filename)
+                except (IOError, OSError):
+                    pass
 
 
 class Tags(FileManagerAware):
@@ -27,11 +107,13 @@ class Tags(FileManagerAware):
         # because the documentation states its behavior isn't necessarily in
         # line with normpath's.
         self._filename = realpath(abspath(expanduser(filename)))
+        self._filelock = FileLock(self._filename)
         self.original_tags = {}
 
         self.sync()
 
     def __contains__(self, item):
+        self.update_if_outdated()
         return item in self.tags
 
     def add(self, *items, **others):
@@ -73,6 +155,7 @@ class Tags(FileManagerAware):
         self.dump()
 
     def marker(self, item):
+        self.update_if_outdated()
         if item in self.tags:
             return self.tags[item]
         return self.default_tag
@@ -121,52 +204,86 @@ class Tags(FileManagerAware):
 
     def dump(self):
         path_new = self._filename + '.new'
-        try:
-            with open(path_new, 'w', encoding="utf-8") as fobj:
-                self._compile(fobj)
-        except OSError as err:
-            self.fm.notify(err, bad=True)
-            return
 
-        try:
-            if exists(self._filename):
-                old_perms = os.stat(self._filename)
-                try:
-                    os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
-                except (OSError, AttributeError):
-                    pass
-                try:
-                    os.chmod(path_new, old_perms.st_mode)
-                except OSError:
-                    pass
+        with self._filelock.acquire(exclusive=True):
+            if self.last_mtime != self._get_mtime():
+                real_tags = self._load_dict()
+                real_tags_copy = copy.deepcopy(real_tags)
 
-                if os.path.islink(self._filename):
-                    target_path = os.path.realpath(self._filename)
-                    os.replace(path_new, target_path)
+                for path in set(self.tags) | set(real_tags):
+                    if path in self.tags:
+                        current = self.tags[path]
+                    else:
+                        current = None
+
+                    if path in self.original_tags:
+                        original = self.original_tags[path]
+                    else:
+                        original = None
+
+                    if path in real_tags:
+                        real = real_tags[path]
+                    else:
+                        real = None
+
+                    if current == original and current != real:
+                        continue
+
+                    if path not in self.tags:
+                        del real_tags[path]
+                    else:
+                        real_tags[path] = current
+
+                self.tags = real_tags
+                self.original_tags = real_tags_copy
+
+            try:
+                with open(path_new, 'w', encoding="utf-8") as fobj:
+                    self._compile(fobj)
+            except OSError as err:
+                self.fm.notify(err, bad=True)
+                return
+
+            try:
+                if exists(self._filename):
+                    old_perms = os.stat(self._filename)
+                    try:
+                        os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
+                    except (OSError, AttributeError):
+                        pass
+                    try:
+                        os.chmod(path_new, old_perms.st_mode)
+                    except OSError:
+                        pass
+
+                    if os.path.islink(self._filename):
+                        target_path = os.path.realpath(self._filename)
+                        os.replace(path_new, target_path)
+                    else:
+                        os.replace(path_new, self._filename)
                 else:
-                    os.replace(path_new, self._filename)
-            else:
-                os.rename(path_new, self._filename)
+                    os.rename(path_new, self._filename)
 
-        except OSError as err:
-            self.fm.notify(err, bad=True)
-            return
+            except OSError as err:
+                self.fm.notify(err, bad=True)
+                return
 
-        self.original_tags = copy.deepcopy(self.tags)
-        self._update_mtime()
+            self.original_tags = copy.deepcopy(self.tags)
+            self._update_mtime()
 
     def _load_dict(self):
-        try:
-            with open(
-                self._filename, "r", encoding="utf-8", errors="replace"
-            ) as fobj:
-                tags = self._parse(fobj)
-        except (OSError, IOError) as err:
-            if exists(self._filename):
-                self.fm.notify(err, bad=True)
-            tags = {}
+        with self._filelock.acquire(exclusive=False):
+            try:
+                with open(
+                    self._filename, "r", encoding="utf-8", errors="replace"
+                ) as fobj:
+                    tags = self._parse(fobj)
+            except (OSError, IOError) as err:
+                if exists(self._filename):
+                    self.fm.notify(err, bad=True)
+                tags = {}
 
-        return tags
+            return tags
 
     def _compile(self, fobj):
         for path, tag in self.tags.items():
