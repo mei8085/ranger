@@ -32,6 +32,10 @@ class MockFileManager:
     
     def notify(self, message, bad=False):
         self.notifications.append((message, bad))
+    
+    def clear_notifications(self):
+        """Clear all collected notifications."""
+        self.notifications = []
 
 
 class TestCommand(Command):
@@ -242,8 +246,16 @@ class TestCommandAlias(unittest.TestCase):
         self.registry._commands['test_command'] = TestCommand
         self.container._commands['test_command'] = TestCommand
     
+    def tearDown(self):
+        """Clean up after each test."""
+        # Clear notifications to avoid affecting other tests
+        self.fm.clear_notifications()
+    
     def test_alias_creation(self):
         """Test creating an alias."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm.notifications), 0)
+        
         self.registry.alias('tc', 'test_command arg1 arg2')
         
         # Check that alias is created
@@ -255,9 +267,15 @@ class TestCommandAlias(unittest.TestCase):
         
         # Verify it's an alias of TestCommand
         self.assertTrue(issubclass(alias_class, TestCommand))
+        
+        # Verify no error notifications were generated
+        self.assertEqual(len(self.fm.notifications), 0)
     
     def test_alias_nonexistent_command(self):
         """Test alias creation for non-existent command."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm.notifications), 0)
+        
         self.registry.alias('invalid', 'nonexistent_command')
         
         # Check that error was notified
@@ -272,7 +290,13 @@ class TestCommandAlias(unittest.TestCase):
     
     def test_alias_error_message_format(self):
         """Test that error message format matches original."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm.notifications), 0)
+        
         self.registry.alias('invalid', 'bad_command')
+        
+        # Verify exactly one notification
+        self.assertEqual(len(self.fm.notifications), 1)
         
         message, _ = self.fm.notifications[0]
         # Original format: 'alias failed: No such command: {0}'
@@ -336,8 +360,18 @@ class TestBehavioralConsistency(unittest.TestCase):
         self.registry.fm = self.fm_registry
         self.container.fm = self.fm_container
     
+    def tearDown(self):
+        """Clean up after each test."""
+        # Clear notifications to avoid affecting other tests
+        self.fm_registry.clear_notifications()
+        self.fm_container.clear_notifications()
+    
     def test_commands_dict_access(self):
         """Test that commands dict is accessible."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         # Both should have commands attribute
         self.assertTrue(hasattr(self.registry, 'commands'))
         self.assertTrue(hasattr(self.container, 'commands'))
@@ -345,9 +379,17 @@ class TestBehavioralConsistency(unittest.TestCase):
         # Both should be dicts
         self.assertIsInstance(self.registry.commands, dict)
         self.assertIsInstance(self.container.commands, dict)
+        
+        # Verify no notifications were generated
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
     
     def test_getitem_behavior(self):
         """Test __getitem__ behavior."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         self.registry._commands['test'] = TestCommand
         self.container._commands['test'] = TestCommand
         
@@ -359,9 +401,17 @@ class TestBehavioralConsistency(unittest.TestCase):
             _ = self.registry['nonexistent']
         with self.assertRaises(KeyError):
             _ = self.container['nonexistent']
+        
+        # Verify no notifications were generated
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
     
     def test_get_command_behavior(self):
         """Test get_command behavior consistency."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         self.registry._commands['test_cmd'] = TestCommand
         self.container._commands['test_cmd'] = TestCommand
         
@@ -376,9 +426,17 @@ class TestBehavioralConsistency(unittest.TestCase):
             self.registry.get_command('nonexistent'),
             self.container.get_command('nonexistent')
         )
+        
+        # Verify no notifications were generated
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
     
     def test_get_command_abbrev_behavior(self):
         """Test get_command with abbrev=True behavior consistency."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         self.registry._commands['test_command'] = TestCommand
         self.container._commands['test_command'] = TestCommand
         
@@ -393,9 +451,17 @@ class TestBehavioralConsistency(unittest.TestCase):
             self.registry.get_command('nonexistent', abbrev=True)
         with self.assertRaises(KeyError):
             self.container.get_command('nonexistent', abbrev=True)
+        
+        # Verify no notifications were generated (KeyError is expected, not a notification)
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
     
     def test_alias_error_behavior(self):
         """Test alias error behavior consistency."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         self.registry.alias('invalid', 'bad_cmd')
         self.container.alias('invalid', 'bad_cmd')
         
@@ -412,6 +478,10 @@ class TestBehavioralConsistency(unittest.TestCase):
     
     def test_command_generator_behavior(self):
         """Test command_generator behavior consistency."""
+        # Ensure no notifications at start
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
+        
         self.registry._commands['alpha'] = TestCommand
         self.registry._commands['beta'] = TestCommand
         self.container._commands['alpha'] = TestCommand
@@ -422,6 +492,10 @@ class TestBehavioralConsistency(unittest.TestCase):
         cont_result = list(self.container.command_generator(''))
         
         self.assertEqual(reg_result, cont_result)
+        
+        # Verify no notifications were generated
+        self.assertEqual(len(self.fm_registry.notifications), 0)
+        self.assertEqual(len(self.fm_container.notifications), 0)
 
 
 if __name__ == '__main__':
