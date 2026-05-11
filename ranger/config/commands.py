@@ -2135,3 +2135,23 @@ class paste_ext(Command):
 
     def execute(self):
         return self.fm.paste(make_safe_path=paste_ext.make_safe_path)
+
+
+class undo(Command):
+    """:undo
+
+    Undo the last file operation.
+    """
+
+    def execute(self):
+        self.fm.undo()
+
+
+class redo(Command):
+    """:redo
+
+    Redo the last undone file operation.
+    """
+
+    def execute(self):
+        self.fm.redo()

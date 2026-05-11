@@ -24,6 +24,14 @@ import ranger
 from ranger import PY3
 from ranger.container.directory import Directory
 from ranger.container.file import File
+from ranger.container.history_undo import (
+    DeleteAction,
+    MoveAction,
+    CopyAction,
+    RenameAction,
+    UndoStackEmpty,
+    RedoStackEmpty,
+)
 from ranger.container.settings import ALLOWED_SETTINGS, ALLOWED_VALUES
 from ranger.core.loader import CommandLoader, CopyLoader
 from ranger.core.shared import FileManagerAware, SettingsAware
@@ -1651,25 +1659,21 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         # COMPAT: old command.py use fm.delete() without arguments
         if files is None:
             files = (fobj.path for fobj in self.thistab.get_selection())
-        self.notify("Deleting {fls}!".format(fls=", ".join(files)))
         files = [os.path.abspath(path) for path in files]
+        self.notify("Deleting {fls}!".format(fls=", ".join(files)))
+
         for path in files:
             # Untag the deleted files.
-            for tag in self.fm.tags.tags:
+            for tag in list(self.fm.tags.tags):
                 if str(tag).startswith(path):
                     self.fm.tags.remove(tag)
         self.copy_buffer = set(fobj for fobj in self.copy_buffer if fobj.path not in files)
-        for path in files:
-            if isdir(path) and not os.path.islink(path):
-                try:
-                    shutil.rmtree(path)
-                except OSError as err:
-                    self.notify(err)
-            else:
-                try:
-                    os.remove(path)
-                except OSError as err:
-                    self.notify(err)
+
+        trash_dir = os.path.join(self.fm.datapath('undo_trash'))
+        action = DeleteAction(files, trash_dir)
+        action.do()
+        self.fm.undo_redo_stack.push(action)
+
         self.thistab.ensure_correct_pointer()
 
     def mkdir(self, name):
@@ -1682,13 +1686,54 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
         if hasattr(src, 'path'):
             src = src.path
 
+        src_abs = os.path.abspath(src)
+        dest_abs = os.path.abspath(dest)
+
         try:
-            os.makedirs(os.path.dirname(dest))
+            os.makedirs(os.path.dirname(dest_abs))
         except OSError:
             pass
         try:
-            os.rename(src, dest)
+            os.rename(src_abs, dest_abs)
         except OSError as err:
             self.notify(err)
             return False
+
+        action = RenameAction(src_abs, dest_abs)
+        self.fm.undo_redo_stack.push(action)
+
         return True
+
+    def undo(self):
+        """:undo
+
+        Undo the last file operation.
+        """
+        if not self.fm.undo_redo_stack.can_undo():
+            self.notify("Nothing to undo")
+            return
+        try:
+            desc = self.fm.undo_redo_stack.undo()
+            self.notify("Undone: {0}".format(desc))
+            self.reload_cwd()
+        except UndoStackEmpty:
+            self.notify("Nothing to undo")
+        except Exception as err:  # pylint: disable=broad-except
+            self.notify("Failed to undo: {0}".format(err), bad=True)
+
+    def redo(self):
+        """:redo
+
+        Redo the last undone file operation.
+        """
+        if not self.fm.undo_redo_stack.can_redo():
+            self.notify("Nothing to redo")
+            return
+        try:
+            desc = self.fm.undo_redo_stack.redo()
+            self.notify("Redone: {0}".format(desc))
+            self.reload_cwd()
+        except RedoStackEmpty:
+            self.notify("Nothing to redo")
+        except Exception as err:  # pylint: disable=broad-except
+            self.notify("Failed to redo: {0}".format(err), bad=True)

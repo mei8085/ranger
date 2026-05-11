@@ -22,6 +22,7 @@ import ranger.api
 from ranger.container import settings
 from ranger.container.bookmarks import Bookmarks
 from ranger.container.directory import Directory
+from ranger.container.history_undo import UndoRedoStack
 from ranger.container.tags import Tags, TagsDummy
 from ranger.core.actions import Actions
 from ranger.core.loader import Loader
@@ -108,6 +109,7 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
         self.rifle = None
         self.thistab = None
         self.zombies = ProcessSet()
+        self.undo_redo_stack = UndoRedoStack()
 
         try:
             self.username = pwd.getpwuid(os.geteuid()).pw_name
