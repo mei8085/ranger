@@ -293,3 +293,137 @@ class TestMoveAction:
             assert not os.path.exists(test_file)
         finally:
             shutil.rmtree(temp_dir)
+
+
+class TestDeleteMerge:
+    def test_continuous_delete_merge(self):
+        temp_dir = tempfile.mkdtemp()
+        trash_dir = os.path.join(temp_dir, 'trash')
+        try:
+            file1 = os.path.join(temp_dir, 'file1.txt')
+            file2 = os.path.join(temp_dir, 'file2.txt')
+            file3 = os.path.join(temp_dir, 'file3.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+            create_temp_file(file3)
+
+            stack = UndoRedoStack()
+
+            action1 = DeleteAction([file1], trash_dir)
+            action1.do()
+            stack.push(action1)
+            assert not os.path.exists(file1)
+
+            action2 = DeleteAction([file2], trash_dir)
+            action2.do()
+            stack.push(action2)
+            assert not os.path.exists(file2)
+
+            action3 = DeleteAction([file3], trash_dir)
+            action3.do()
+            stack.push(action3)
+            assert not os.path.exists(file3)
+
+            assert len(stack._undo_stack) == 1
+            assert 'file1.txt' in stack._undo_stack[0].description
+            assert 'file2.txt' in stack._undo_stack[0].description
+            assert 'file3.txt' in stack._undo_stack[0].description
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+            assert os.path.exists(file3)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_delete_no_merge_different_trash(self):
+        temp_dir = tempfile.mkdtemp()
+        trash1 = os.path.join(temp_dir, 'trash1')
+        trash2 = os.path.join(temp_dir, 'trash2')
+        try:
+            file1 = os.path.join(temp_dir, 'file1.txt')
+            file2 = os.path.join(temp_dir, 'file2.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+
+            stack = UndoRedoStack()
+
+            action1 = DeleteAction([file1], trash1)
+            action1.do()
+            stack.push(action1)
+
+            action2 = DeleteAction([file2], trash2)
+            action2.do()
+            stack.push(action2)
+
+            assert len(stack._undo_stack) == 2
+        finally:
+            shutil.rmtree(temp_dir)
+
+
+class TestMoveMerge:
+    def test_continuous_move_merge(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            src_dir = os.path.join(temp_dir, 'src')
+            dest_dir = os.path.join(temp_dir, 'dest')
+            create_temp_dir(src_dir)
+            create_temp_dir(dest_dir)
+
+            file1 = os.path.join(src_dir, 'file1.txt')
+            file2 = os.path.join(src_dir, 'file2.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+
+            stack = UndoRedoStack()
+
+            action1 = MoveAction([file1], dest_dir)
+            action1.do()
+            stack.push(action1)
+            assert os.path.exists(os.path.join(dest_dir, 'file1.txt'))
+
+            action2 = MoveAction([file2], dest_dir)
+            action2.do()
+            stack.push(action2)
+            assert os.path.exists(os.path.join(dest_dir, 'file2.txt'))
+
+            assert len(stack._undo_stack) == 1
+            assert 'file1.txt' in stack._undo_stack[0].description
+            assert 'file2.txt' in stack._undo_stack[0].description
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+            assert not os.path.exists(os.path.join(dest_dir, 'file1.txt'))
+            assert not os.path.exists(os.path.join(dest_dir, 'file2.txt'))
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_move_no_merge_different_dest(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            src_dir = os.path.join(temp_dir, 'src')
+            dest1 = os.path.join(temp_dir, 'dest1')
+            dest2 = os.path.join(temp_dir, 'dest2')
+            create_temp_dir(src_dir)
+            create_temp_dir(dest1)
+            create_temp_dir(dest2)
+
+            file1 = os.path.join(src_dir, 'file1.txt')
+            file2 = os.path.join(src_dir, 'file2.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+
+            stack = UndoRedoStack()
+
+            action1 = MoveAction([file1], dest1)
+            action1.do()
+            stack.push(action1)
+
+            action2 = MoveAction([file2], dest2)
+            action2.do()
+            stack.push(action2)
+
+            assert len(stack._undo_stack) == 2
+        finally:
+            shutil.rmtree(temp_dir)

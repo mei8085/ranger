@@ -69,6 +69,8 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
         self.overwrite = overwrite
         self.make_safe_path = make_safe_path
         self.percent = 0
+        self._moved_paths = []  # (src_path, dest_path) pairs for undo
+        self._copied_paths = []  # dest_paths for copy undo
         if self.copy_buffer:
             self.one_file = self.copy_buffer[0]
         Loadable.__init__(self, self.generate(), 'Calculating size...')
@@ -99,6 +101,8 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
             return
 
         from ranger.ext import shutil_generatorized as shutil_g
+        from ranger.container.history_undo import MoveAction, CopyAction
+
         # TODO: Don't calculate size when renaming (needs detection)
         size = 0
         for size in self._calculate_size():
@@ -106,14 +110,20 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
         size = max(1, size)
         size_str = " (" + human_readable(size) + ")"
         done = 0
+
         if self.do_cut:
             self.original_copy_buffer.clear()
             if len(self.copy_buffer) == 1:
                 self.description = "moving: " + self.one_file.path + size_str
             else:
                 self.description = "moving files from: " + self.one_file.dirname + size_str
+
+            src_paths = []
+            dest_paths = []
+
             for fobj in self.copy_buffer:
-                for path in self.fm.tags.tags:
+                src_paths.append(fobj.path)
+                for path in list(self.fm.tags.tags):
                     if path == fobj.path or str(path).startswith(fobj.path):
                         tag = self.fm.tags.tags[path]
                         self.fm.tags.remove(path)
@@ -122,6 +132,10 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
                             os.path.join(self.original_path, fobj.basename))
                         self.fm.tags.tags[new_path] = tag
                         self.fm.tags.dump()
+
+                original_basename = fobj.basename
+                expected_dest = os.path.join(self.original_path, original_basename)
+
                 n = 0
                 for n in shutil_g.move(src=fobj.path, dst=self.original_path,
                                        overwrite=self.overwrite,
@@ -129,17 +143,50 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
                     self.percent = ((done + n) / size) * 100.
                     yield
                 done += n
+
+                if os.path.exists(expected_dest):
+                    dest_paths.append(expected_dest)
+                else:
+                    dest_name = self.make_safe_path(expected_dest)
+                    base, ext = os.path.splitext(original_basename)
+                    counter = 1
+                    while True:
+                        candidate = os.path.join(
+                            self.original_path,
+                            "{0}_{1}{2}".format(base, counter, ext)
+                        )
+                        if os.path.exists(candidate):
+                            dest_paths.append(candidate)
+                            break
+                        counter += 1
+                        if counter > 1000:
+                            dest_paths.append(expected_dest)
+                            break
+
+            if src_paths and dest_paths:
+                action = MoveAction(src_paths, self.original_path)
+                action._dest_paths = dest_paths
+                self.fm.undo_redo_stack.push(action)
+
         else:
             if len(self.copy_buffer) == 1:
                 self.description = "copying: " + self.one_file.path + size_str
             else:
                 self.description = "copying files from: " + self.one_file.dirname + size_str
+
+            src_paths = []
+            dest_paths = []
+
             for fobj in self.copy_buffer:
+                src_paths.append(fobj.path)
+                original_basename = fobj.basename
+                expected_dest = os.path.join(self.original_path, original_basename)
+
                 if os.path.isdir(fobj.path) and not os.path.islink(fobj.path):
                     n = 0
                     for n in shutil_g.copytree(
                             src=fobj.path,
-                            dst=os.path.join(self.original_path, fobj.basename),
+                            dst=expected_dest,
                             symlinks=True,
                             overwrite=self.overwrite,
                             make_safe_path=self.make_safe_path,
@@ -155,6 +202,31 @@ class CopyLoader(Loadable, FileManagerAware):  # pylint: disable=too-many-instan
                         self.percent = ((done + n) / size) * 100.
                         yield
                     done += n
+
+                if os.path.exists(expected_dest):
+                    dest_paths.append(expected_dest)
+                else:
+                    base, ext = os.path.splitext(original_basename)
+                    counter = 1
+                    found = False
+                    while counter < 1000:
+                        candidate = os.path.join(
+                            self.original_path,
+                            "{0}_{1}{2}".format(base, counter, ext)
+                        )
+                        if os.path.exists(candidate):
+                            dest_paths.append(candidate)
+                            found = True
+                            break
+                        counter += 1
+                    if not found:
+                        dest_paths.append(expected_dest)
+
+            if src_paths and dest_paths:
+                action = CopyAction(src_paths, self.original_path)
+                action._dest_paths = dest_paths
+                self.fm.undo_redo_stack.push(action)
+
         cwd = self.fm.get_directory(self.original_path)
         cwd.load_content()
 

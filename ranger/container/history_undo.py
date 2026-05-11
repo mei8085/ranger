@@ -84,10 +84,17 @@ class DeleteAction(UndoableAction):
                 shutil.move(backup_path, original_path)
 
     def can_merge_with(self, other):
-        return False
+        if not isinstance(other, DeleteAction):
+            return False
+        if self._trash_dir != other._trash_dir:
+            return False
+        return True
 
     def merge_with(self, other):
-        pass
+        self._original_paths.extend(other._original_paths)
+        self._backup_paths.extend(other._backup_paths)
+        self._trash_dir = other._trash_dir
+        self.description = "delete: {0}".format(", ".join(self._original_paths))
 
 
 class RenameAction(UndoableAction):
@@ -166,10 +173,19 @@ class MoveAction(UndoableAction):
                 shutil.move(dest_path, src_path)
 
     def can_merge_with(self, other):
-        return False
+        if not isinstance(other, MoveAction):
+            return False
+        if self._dest_dir != other._dest_dir:
+            return False
+        return True
 
     def merge_with(self, other):
-        pass
+        self._src_paths.extend(other._src_paths)
+        self._dest_paths.extend(other._dest_paths)
+        self.description = "move: {0} -> {1}".format(
+            ", ".join(os.path.basename(p) for p in self._src_paths),
+            self._dest_dir
+        )
 
 
 class CopyAction(UndoableAction):
