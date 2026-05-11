@@ -5,6 +5,8 @@
 
 from __future__ import (absolute_import, division, print_function)
 
+import copy
+import os
 import string
 from io import open
 from os.path import exists, abspath, realpath, expanduser, sep
@@ -16,6 +18,7 @@ ALLOWED_KEYS = string.ascii_letters + string.digits + string.punctuation
 
 class Tags(FileManagerAware):
     default_tag = '*'
+    last_mtime = None
 
     def __init__(self, filename):
 
@@ -24,6 +27,7 @@ class Tags(FileManagerAware):
         # because the documentation states its behavior isn't necessarily in
         # line with normpath's.
         self._filename = realpath(abspath(expanduser(filename)))
+        self.original_tags = {}
 
         self.sync()
 
@@ -34,7 +38,7 @@ class Tags(FileManagerAware):
         if len(items) == 0:
             return
         tag = others.get('tag', self.default_tag)
-        self.sync()
+        self.update_if_outdated()
         for item in items:
             self.tags[item] = tag
         self.dump()
@@ -42,7 +46,7 @@ class Tags(FileManagerAware):
     def remove(self, *items):
         if len(items) == 0:
             return
-        self.sync()
+        self.update_if_outdated()
         for item in items:
             try:
                 del self.tags[item]
@@ -57,7 +61,7 @@ class Tags(FileManagerAware):
         tag = str(tag)
         if tag not in ALLOWED_KEYS:
             return
-        self.sync()
+        self.update_if_outdated()
         for item in items:
             try:
                 if item in self and tag in (self.tags[item], self.default_tag):
@@ -74,23 +78,95 @@ class Tags(FileManagerAware):
         return self.default_tag
 
     def sync(self):
+        tags_dict = self._load_dict()
+        self.tags = tags_dict
+        self.original_tags = copy.deepcopy(tags_dict)
+        self._update_mtime()
+
+    def update_if_outdated(self):
+        if self.last_mtime != self._get_mtime():
+            self.update()
+
+    def update(self):
+        real_tags = self._load_dict()
+        real_tags_copy = copy.deepcopy(real_tags)
+
+        for path in set(self.tags) | set(real_tags):
+            if path in self.tags:
+                current = self.tags[path]
+            else:
+                current = None
+
+            if path in self.original_tags:
+                original = self.original_tags[path]
+            else:
+                original = None
+
+            if path in real_tags:
+                real = real_tags[path]
+            else:
+                real = None
+
+            if current == original and current != real:
+                continue
+
+            if path not in self.tags:
+                del real_tags[path]
+            else:
+                real_tags[path] = current
+
+        self.tags = real_tags
+        self.original_tags = real_tags_copy
+        self._update_mtime()
+
+    def dump(self):
+        path_new = self._filename + '.new'
+        try:
+            with open(path_new, 'w', encoding="utf-8") as fobj:
+                self._compile(fobj)
+        except OSError as err:
+            self.fm.notify(err, bad=True)
+            return
+
+        try:
+            if exists(self._filename):
+                old_perms = os.stat(self._filename)
+                try:
+                    os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
+                except (OSError, AttributeError):
+                    pass
+                try:
+                    os.chmod(path_new, old_perms.st_mode)
+                except OSError:
+                    pass
+
+                if os.path.islink(self._filename):
+                    target_path = os.path.realpath(self._filename)
+                    os.replace(path_new, target_path)
+                else:
+                    os.replace(path_new, self._filename)
+            else:
+                os.rename(path_new, self._filename)
+
+        except OSError as err:
+            self.fm.notify(err, bad=True)
+            return
+
+        self.original_tags = copy.deepcopy(self.tags)
+        self._update_mtime()
+
+    def _load_dict(self):
         try:
             with open(
                 self._filename, "r", encoding="utf-8", errors="replace"
             ) as fobj:
-                self.tags = self._parse(fobj)
+                tags = self._parse(fobj)
         except (OSError, IOError) as err:
             if exists(self._filename):
                 self.fm.notify(err, bad=True)
-            else:
-                self.tags = {}
+            tags = {}
 
-    def dump(self):
-        try:
-            with open(self._filename, 'w', encoding="utf-8") as fobj:
-                self._compile(fobj)
-        except OSError as err:
-            self.fm.notify(err, bad=True)
+        return tags
 
     def _compile(self, fobj):
         for path, tag in self.tags.items():
@@ -113,10 +189,20 @@ class Tags(FileManagerAware):
 
         return result
 
+    def _get_mtime(self):
+        try:
+            return os.stat(self._filename).st_mtime
+        except (OSError, FileNotFoundError):
+            return None
+
+    def _update_mtime(self):
+        self.last_mtime = self._get_mtime()
+
     def update_path(self, path_old, path_new):
-        self.sync()
+        self.update_if_outdated()
         changed = False
-        for path, tag in self.tags.items():
+        items = list(self.tags.items())
+        for path, tag in items:
             pnew = None
             if path == path_old:
                 pnew = path_new
@@ -160,6 +246,12 @@ class TagsDummy(Tags):
         return self.default_tag
 
     def sync(self):
+        pass
+
+    def update_if_outdated(self):
+        pass
+
+    def update(self):
         pass
 
     def dump(self):
