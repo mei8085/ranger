@@ -7,9 +7,10 @@ from __future__ import (absolute_import, division, print_function)
 
 import ranger
 from ranger.core.linemode import LinemodeBase
+from ranger.api.command_registry import CommandRegistry
 
 
-__all__ = ['ranger', 'LinemodeBase', 'hook_init', 'hook_ready', 'register_linemode']
+__all__ = ['ranger', 'LinemodeBase', 'hook_init', 'hook_ready', 'register_linemode', 'CommandRegistry']
 
 
 # Hooks for use in plugins:

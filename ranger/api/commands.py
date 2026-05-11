@@ -13,9 +13,10 @@ from ranger import MACRO_DELIMITER, MACRO_DELIMITER_ESC
 from ranger.core.shared import FileManagerAware
 from ranger.ext.lazy_property import lazy_property
 from ranger.api import LinemodeBase, hook_init, hook_ready, register_linemode  # COMPAT
+from ranger.api.command_registry import CommandRegistry
 
 
-__all__ = ['Command', 'LinemodeBase', 'hook_init', 'hook_ready', 'register_linemode']  # COMPAT
+__all__ = ['Command', 'LinemodeBase', 'hook_init', 'hook_ready', 'register_linemode', 'CommandRegistry']  # COMPAT
 
 
 _SETTINGS_RE = re.compile(r'^\s*([^\s]+?)=(.*)$')
@@ -41,57 +42,12 @@ def _command_init(cls):
     return cls
 
 
-class CommandContainer(FileManagerAware):
-
-    def __init__(self):
-        self.commands = {}
-
-    def __getitem__(self, key):
-        return self.commands[key]
-
-    def alias(self, name, full_command):
-        cmd_name = full_command.split()[0]
-        cmd_cls = self.get_command(cmd_name)
-        if cmd_cls is None:
-            self.fm.notify('alias failed: No such command: {0}'.format(cmd_name), bad=True)
-        else:
-            self.commands[name] = _command_init(command_alias_factory(name, cmd_cls, full_command))
-
-    def load_commands_from_module(self, module):
-        for var in vars(module).values():
-            try:
-                if issubclass(var, Command) and var != Command:
-                    self.commands[var.get_name()] = _command_init(var)
-            except TypeError:
-                pass
-
-    def load_commands_from_object(self, obj, filtr):
-        for attribute_name in dir(obj):
-            if attribute_name[0] == '_' or attribute_name not in filtr:
-                continue
-            attribute = getattr(obj, attribute_name)
-            if hasattr(attribute, '__call__'):
-                self.commands[attribute_name] = _command_init(command_function_factory(attribute))
-
-    def get_command(self, name, abbrev=False):
-        if abbrev:
-            lst = [cls for cmd, cls in self.commands.items()
-                   if cls.allow_abbrev and cmd.startswith(name) or cmd == name]
-            if not lst:
-                raise KeyError
-            if len(lst) == 1:
-                return lst[0]
-            if self.commands[name] in lst:
-                return self.commands[name]
-            raise ValueError("Ambiguous command")
-
-        try:
-            return self.commands[name]
-        except KeyError:
-            return None
-
-    def command_generator(self, start):
-        return sorted(cmd + ' ' for cmd in self.commands if cmd.startswith(start))
+class CommandContainer(CommandRegistry):
+    """
+    Backward-compatible command container that inherits from the new
+    unified CommandRegistry. This ensures all existing code continues
+    to work without modification.
+    """
 
 
 class Command(FileManagerAware):
