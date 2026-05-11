@@ -427,3 +427,85 @@ class TestMoveMerge:
             assert len(stack._undo_stack) == 2
         finally:
             shutil.rmtree(temp_dir)
+
+
+class TestDeleteMergeUndoRedo:
+    def test_merged_delete_undo_redo_undo(self):
+        temp_dir = tempfile.mkdtemp()
+        trash_dir = os.path.join(temp_dir, 'trash')
+        try:
+            file1 = os.path.join(temp_dir, 'file1.txt')
+            file2 = os.path.join(temp_dir, 'file2.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+
+            stack = UndoRedoStack()
+
+            action1 = DeleteAction([file1], trash_dir)
+            action1.do()
+            stack.push(action1)
+
+            action2 = DeleteAction([file2], trash_dir)
+            action2.do()
+            stack.push(action2)
+
+            assert len(stack._undo_stack) == 1
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+
+            stack.redo()
+            assert not os.path.exists(file1)
+            assert not os.path.exists(file2)
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+        finally:
+            shutil.rmtree(temp_dir)
+
+
+class TestMoveMergeUndoRedo:
+    def test_merged_move_undo_redo_undo(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            src_dir = os.path.join(temp_dir, 'src')
+            dest_dir = os.path.join(temp_dir, 'dest')
+            create_temp_dir(src_dir)
+            create_temp_dir(dest_dir)
+
+            file1 = os.path.join(src_dir, 'file1.txt')
+            file2 = os.path.join(src_dir, 'file2.txt')
+            create_temp_file(file1)
+            create_temp_file(file2)
+
+            stack = UndoRedoStack()
+
+            action1 = MoveAction([file1], dest_dir)
+            action1.do()
+            stack.push(action1)
+
+            action2 = MoveAction([file2], dest_dir)
+            action2.do()
+            stack.push(action2)
+
+            assert len(stack._undo_stack) == 1
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+            assert not os.path.exists(os.path.join(dest_dir, 'file1.txt'))
+            assert not os.path.exists(os.path.join(dest_dir, 'file2.txt'))
+
+            stack.redo()
+            assert not os.path.exists(file1)
+            assert not os.path.exists(file2)
+            assert os.path.exists(os.path.join(dest_dir, 'file1.txt'))
+            assert os.path.exists(os.path.join(dest_dir, 'file2.txt'))
+
+            stack.undo()
+            assert os.path.exists(file1)
+            assert os.path.exists(file2)
+        finally:
+            shutil.rmtree(temp_dir)

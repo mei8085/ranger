@@ -53,7 +53,8 @@ class DeleteAction(UndoableAction):
         if not os.path.exists(self._trash_dir):
             os.makedirs(self._trash_dir)
 
-        for i, path in enumerate(self._original_paths):
+        self._backup_paths = []
+        for path in self._original_paths:
             basename = os.path.basename(path)
             backup_path = os.path.join(self._trash_dir, basename)
 
@@ -146,6 +147,7 @@ class MoveAction(UndoableAction):
         )
 
     def do(self):
+        self._dest_paths = []
         for src_path in self._src_paths:
             basename = os.path.basename(src_path)
             dest_path = os.path.join(self._dest_dir, basename)
@@ -202,6 +204,7 @@ class CopyAction(UndoableAction):
     def do(self):
         from ranger.ext.shutil_generatorized import copy2, copytree
 
+        self._dest_paths = []
         for src_path in self._src_paths:
             basename = os.path.basename(src_path)
             dest_path = os.path.join(self._dest_dir, basename)
