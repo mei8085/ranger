@@ -96,6 +96,11 @@ class Macros(FileManagerAware):
             return
         self._set_dict(real_dict)
 
+    def _notify(self, message, bad=False):
+        fm = getattr(self, 'fm', None)
+        if fm is not None:
+            fm.notify(message, bad=bad)
+
     def save(self):
         if self.path is None:
             return
@@ -107,11 +112,14 @@ class Macros(FileManagerAware):
             with open(path_new, 'w', encoding="utf-8") as fobj:
                 json.dump(data, fobj, ensure_ascii=False, indent=2)
         except OSError as ex:
-            self.fm.notify('Macros error: {0}'.format(str(ex)), bad=True)
+            self._notify('Macros error: {0}'.format(str(ex)), bad=True)
             return
 
         try:
-            if os.path.exists(self.path):
+            target_path = None
+            if os.path.islink(self.path):
+                target_path = os.path.realpath(self.path)
+            elif os.path.lexists(self.path):
                 old_perms = os.stat(self.path)
                 try:
                     os.chown(path_new, old_perms.st_uid, old_perms.st_gid)
@@ -121,19 +129,17 @@ class Macros(FileManagerAware):
                     os.chmod(path_new, old_perms.st_mode)
                 except OSError:
                     pass
-                if os.path.islink(self.path):
-                    target_path = os.path.realpath(self.path)
-                    if os.path.exists(target_path):
-                        os.remove(target_path)
-                    os.rename(path_new, target_path)
-                else:
-                    if os.path.exists(self.path):
-                        os.remove(self.path)
-                    os.rename(path_new, self.path)
+
+            if target_path is not None:
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+                os.rename(path_new, target_path)
             else:
+                if os.path.exists(self.path):
+                    os.remove(self.path)
                 os.rename(path_new, self.path)
         except OSError as ex:
-            self.fm.notify('Macros error: {0}'.format(str(ex)), bad=True)
+            self._notify('Macros error: {0}'.format(str(ex)), bad=True)
             return
 
         self._update_mtime()
@@ -150,7 +156,7 @@ class Macros(FileManagerAware):
                 for name, keybinding in data.items():
                     dct[name] = list(parse_keybinding(keybinding))
         except (OSError, ValueError, KeyError) as ex:
-            self.fm.notify('Macros error: {0}'.format(str(ex)), bad=True)
+            self._notify('Macros error: {0}'.format(str(ex)), bad=True)
             return None
         return dct
 
