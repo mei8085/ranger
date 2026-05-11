@@ -3,12 +3,7 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-import re
-
 from ranger.core.shared import FileManagerAware
-
-
-_ALIAS_LINE_RE = re.compile(r'(\s+)')
 
 
 def _get_command_helpers():
