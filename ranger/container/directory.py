@@ -347,7 +347,11 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
 
         try:  # pylint: disable=too-many-nested-blocks
             if self.runnable:
+                if self.is_cancelled():
+                    return
                 yield
+                if self.is_cancelled():
+                    return
                 mypath = self.path
 
                 self.mount_path = mount_path(mypath)
@@ -355,6 +359,8 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
                 if self.flat:
                     filelist = []
                     for dirpath, dirnames, filenames in walklevel(mypath, self.flat):
+                        if self.is_cancelled():
+                            return
                         dirlist = [
                             os.path.join("/", dirpath, d)
                             for d in dirnames
@@ -390,7 +396,11 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
                 if self.is_link:
                     self.infostring = '->' + self.infostring
 
+                if self.is_cancelled():
+                    return
                 yield
+                if self.is_cancelled():
+                    return
 
                 marked_paths = [obj.path for obj in self.marked_items]
 
@@ -399,6 +409,8 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
 
                 has_vcschild = False
                 for name in filenames:
+                    if self.is_cancelled():
+                        return
                     try:
                         file_lstat = os_lstat(name)
                         if file_lstat.st_mode & 0o170000 == 0o120000:
@@ -445,6 +457,8 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
 
                     files.append(item)
                     self.percent = 100 * len(files) // len(filenames)
+                    if self.is_cancelled():
+                        return
                     yield
                 self.has_vcschild = has_vcschild
                 self.disk_usage = disk_usage
@@ -479,9 +493,10 @@ class Directory(  # pylint: disable=too-many-instance-attributes,too-many-public
 
         finally:
             self.loading = False
-            self.fm.signal_emit("finished_loading_dir", directory=self)
-            if self.vcs:
-                self.fm.ui.vcsthread.process(self)
+            if not self.is_cancelled():
+                self.fm.signal_emit("finished_loading_dir", directory=self)
+                if self.vcs:
+                    self.fm.ui.vcsthread.process(self)
     # pylint: enable=too-many-locals,too-many-branches,too-many-statements
 
     def unload(self):

@@ -12,6 +12,11 @@ from ranger.ext.safe_path import get_safe_path
 __all__ = ["copyfileobj", "copyfileobj_range", "copyfile", "copystat", "copy2", "BLOCK_SIZE",
            "copytree", "move", "rmtree", "Error", "SpecialFileError"]
 
+
+class OperationCancelled(Exception):
+    """Raised when a file operation is cancelled."""
+    pass
+
 BLOCK_SIZE = 16 * 1024
 
 
@@ -99,10 +104,12 @@ else:
             pass
 
 
-def copyfileobj(fsrc, fdst, length=BLOCK_SIZE):
+def copyfileobj(fsrc, fdst, length=BLOCK_SIZE, cancelled=None):
     """copy data from file-like object fsrc to file-like object fdst"""
     done = 0
     while 1:
+        if cancelled and cancelled():
+            raise OperationCancelled("File copy cancelled")
         buf = fsrc.read(length)
         if not buf:
             break
@@ -114,12 +121,14 @@ def copyfileobj(fsrc, fdst, length=BLOCK_SIZE):
 try:
     _copy = os.copy_file_range
 
-    def copyfileobj_range(fsrc, fdst, length=BLOCK_SIZE):
+    def copyfileobj_range(fsrc, fdst, length=BLOCK_SIZE, cancelled=None):
         """copy data from fsrc to fdst with copy_file_range to enable CoW"""
         src_fd = fsrc.fileno()
         dst_fd = fdst.fileno()
         done = 0
         while 1:
+            if cancelled and cancelled():
+                raise OperationCancelled("File copy cancelled")
             # copy_file_range returns number of bytes read, or -1 if there was
             # an error
             read = _copy(src_fd, dst_fd, length)
@@ -133,7 +142,7 @@ except AttributeError:
     pass
 
 
-def copyfile(src, dst):
+def copyfile(src, dst, cancelled=None):
     """Copy data from src to dst"""
     if _samefile(src, dst):
         raise Error("`%s` and `%s` are the same file" % (src, dst))
@@ -152,7 +161,7 @@ def copyfile(src, dst):
     with open(src, 'rb') as fsrc:
         with open(dst, 'wb') as fdst:
             try:
-                for done in copyfileobj_range(fsrc, fdst):
+                for done in copyfileobj_range(fsrc, fdst, cancelled=cancelled):
                     yield done
                 return
             except OSError:
@@ -161,11 +170,12 @@ def copyfile(src, dst):
                 fdst.seek(0, 0)
             except NameError:
                 pass  # Just fall back if there's no copy_file_range
-            for done in copyfileobj(fsrc, fdst):
+            for done in copyfileobj(fsrc, fdst, cancelled=cancelled):
                 yield done
 
 
-def copy2(src, dst, overwrite=False, symlinks=False, make_safe_path=get_safe_path):
+def copy2(src, dst, overwrite=False, symlinks=False, make_safe_path=get_safe_path,
+          cancelled=None):
     """Copy data and all stat info ("cp -p src dst").
 
     The destination may be a directory.
@@ -181,7 +191,7 @@ def copy2(src, dst, overwrite=False, symlinks=False, make_safe_path=get_safe_pat
             os.unlink(dst)
         os.symlink(linkto, dst)
     else:
-        for done in copyfile(src, dst):
+        for done in copyfile(src, dst, cancelled=cancelled):
             yield done
         copystat(src, dst)
 
@@ -195,6 +205,7 @@ def copytree(
     ignore=None,
     overwrite=False,
     make_safe_path=get_safe_path,
+    cancelled=None,
 ):
     """Recursively copy a directory tree using copy2().
 
@@ -221,6 +232,8 @@ def copytree(
     XXX Consider this example code rather than the ultimate tool.
 
     """
+    if cancelled and cancelled():
+        raise OperationCancelled("Directory copy cancelled")
     names = os.listdir(src)
     if ignore is not None:
         ignored_names = ignore(src, names)
@@ -236,6 +249,8 @@ def copytree(
     errors = []
     done = 0
     for name in names:
+        if cancelled and cancelled():
+            raise OperationCancelled("Directory copy cancelled")
         if name in ignored_names:
             continue
         srcname = os.path.join(src, name)
@@ -256,6 +271,7 @@ def copytree(
                     ignore=ignore,
                     overwrite=overwrite,
                     make_safe_path=make_safe_path,
+                    cancelled=cancelled,
                 ):
                     yield done + n
                 done += n
@@ -263,7 +279,7 @@ def copytree(
                 # Will raise a SpecialFileError for unsupported file types
                 n = 0
                 for n in copy2(srcname, dstname, overwrite=overwrite, symlinks=symlinks,
-                               make_safe_path=make_safe_path):
+                               make_safe_path=make_safe_path, cancelled=cancelled):
                     yield done + n
                 done += n
         # catch the Error from the recursive copytree so that we can
@@ -280,7 +296,7 @@ def copytree(
         raise Error(errors)
 
 
-def move(src, dst, overwrite=False, make_safe_path=get_safe_path):
+def move(src, dst, overwrite=False, make_safe_path=get_safe_path, cancelled=None):
     """Recursively move a file or directory to another location. This is
     similar to the Unix "mv" command.
 
@@ -317,11 +333,11 @@ def move(src, dst, overwrite=False, make_safe_path=get_safe_path):
             if _destinsrc(src, dst):
                 raise Error("Cannot move a directory '%s' into itself '%s'." % (src, dst))
             for done in copytree(src, real_dst, symlinks=True, overwrite=overwrite,
-                                 make_safe_path=make_safe_path):
+                                 make_safe_path=make_safe_path, cancelled=cancelled):
                 yield done
             rmtree(src)
         else:
             for done in copy2(src, real_dst, symlinks=True, overwrite=overwrite,
-                              make_safe_path=make_safe_path):
+                              make_safe_path=make_safe_path, cancelled=cancelled):
                 yield done
             os.unlink(src)
