@@ -1324,6 +1324,214 @@ class bulkrename(Command):
             fm.notify("files have not been retagged")
 
 
+class rename_pattern(Command):
+    """:rename_pattern <regex> <template>
+
+    Renames selected files by matching their names against a regular
+    expression and applying a replacement template.
+
+    Example:
+    :rename_pattern 'IMG_(\d{4})\.jpg' 'Vacation_\1.jpg'
+
+    This renames 'IMG_1234.jpg' to 'Vacation_1234.jpg'.
+
+    Features:
+    - Live preview of name changes while typing
+    - Conflict detection (multiple files targetting same name, or target exists)
+    - Support for undoing the last batch of renames via :undo_rename
+    """
+
+    _undo_operations = None
+
+    def __init__(self, *args, **kwargs):
+        super(rename_pattern, self).__init__(*args, **kwargs)
+
+    def execute(self):
+        from functools import partial
+        from ranger.container.file import File
+
+        if len(self.args) < 3:
+            return self.fm.notify(
+                'Syntax: rename_pattern <regex> <template>', bad=True)
+
+        pattern = self.arg(1)
+        template = self.rest(2)
+
+        try:
+            regex = re.compile(pattern)
+        except re.error as err:
+            return self.fm.notify(
+                'Invalid regular expression: {0}'.format(err), bad=True)
+
+        selections = self.fm.thistab.get_selection()
+        if not selections:
+            return self.fm.notify('No files selected', bad=True)
+
+        new_names = []
+        for fobj in selections:
+            match = regex.match(fobj.relative_path)
+            if match:
+                new_name = match.expand(template)
+            else:
+                new_name = fobj.relative_path
+            new_names.append(new_name)
+
+        conflicts = self._detect_conflicts(selections, new_names)
+        if conflicts:
+            self.fm.notify(conflicts, bad=True)
+            self.fm.ui.console.ask(
+                'There are conflicts. Do you want to continue anyway? (y/N)',
+                partial(self._confirm_and_rename, selections, new_names),
+                ('n', 'N', 'y', 'Y'),
+            )
+            return
+
+        self._perform_rename(selections, new_names)
+
+    def _confirm_and_rename(self, selections, new_names, answer):
+        if answer.lower() == 'y':
+            self._perform_rename(selections, new_names)
+
+    def _perform_rename(self, selections, new_names):
+        from ranger.container.file import File
+
+        undo_operations = []
+        performed = []
+
+        for old_fobj, new_name in zip(selections, new_names):
+            old_path = old_fobj.path
+            if new_name == old_fobj.relative_path:
+                continue
+
+            if self.fm.rename(old_fobj, new_name):
+                new_fobj = File(os.path.join(self.fm.thisdir.path, new_name))
+                self.fm.bookmarks.update_path(old_path, new_fobj)
+                self.fm.tags.update_path(old_path, new_fobj.path)
+                undo_operations.append((new_fobj.path, old_path))
+                performed.append(new_fobj)
+
+        if performed:
+            rename_pattern._undo_operations = undo_operations
+            self.fm.thisdir.pointed_obj = performed[0]
+            self.fm.thisfile = performed[0]
+            self.fm.notify('Renamed {0} file(s)'.format(len(performed)))
+            self.fm.reload_cwd()
+
+    def quick(self):
+        if len(self.args) < 3:
+            return False
+
+        pattern = self.arg(1)
+        template = self.rest(2)
+
+        try:
+            regex = re.compile(pattern)
+        except re.error:
+            self.fm.notify('Invalid regex', bad=True)
+            return False
+
+        selections = self.fm.thistab.get_selection()
+        if not selections:
+            return False
+
+        preview_lines = []
+        new_names = []
+        for fobj in selections:
+            match = regex.match(fobj.relative_path)
+            if match:
+                new_name = match.expand(template)
+            else:
+                new_name = fobj.relative_path
+            new_names.append(new_name)
+
+            if new_name != fobj.relative_path:
+                preview_lines.append(
+                    '{0} -> {1}'.format(fobj.relative_path, new_name))
+            else:
+                preview_lines.append(
+                    '{0} (unchanged)'.format(fobj.relative_path))
+
+        conflicts = self._detect_conflicts(selections, new_names)
+        if conflicts:
+            preview_lines.append('')
+            preview_lines.append('WARNING: ' + conflicts)
+
+        if preview_lines:
+            pager = self.fm.ui.open_pager()
+            pager.set_source(['Rename Preview:'] + preview_lines)
+            pager.move(to=0, percentage=True)
+        return False
+
+    def cancel(self):
+        if self.fm.ui.pager:
+            self.fm.ui.close_pager()
+
+    @staticmethod
+    def _detect_conflicts(selections, new_names):
+        from os.path import join, exists
+
+        name_to_indices = {}
+        for idx, (fobj, new_name) in enumerate(zip(selections, new_names)):
+            if new_name != fobj.relative_path:
+                if new_name not in name_to_indices:
+                    name_to_indices[new_name] = []
+                name_to_indices[new_name].append(idx)
+
+        for new_name, indices in name_to_indices.items():
+            if len(indices) > 1:
+                return 'Multiple files would be renamed to: {0}'.format(new_name)
+
+        cwd_path = selections[0].realpath if hasattr(selections[0], 'realpath') \
+            else os.path.dirname(selections[0].path)
+        cwd_path = os.path.dirname(selections[0].path)
+
+        for fobj, new_name in zip(selections, new_names):
+            if new_name != fobj.relative_path:
+                target_path = join(cwd_path, new_name)
+                if exists(target_path):
+                    target_is_original = False
+                    for other in selections:
+                        if other.relative_path == new_name and \
+                                other.path != target_path:
+                            target_is_original = True
+                            break
+                    if not target_is_original:
+                        return 'Target already exists: {0}'.format(new_name)
+
+        return None
+
+
+class undo_rename(Command):
+    """:undo_rename
+
+    Undoes the last batch of renames performed by :rename_pattern.
+    """
+
+    def execute(self):
+        from ranger.container.file import File
+
+        operations = rename_pattern._undo_operations
+        if not operations:
+            return self.fm.notify('Nothing to undo', bad=True)
+
+        undone = []
+        for new_path, old_path in reversed(operations):
+            new_fobj = File(new_path)
+            old_name = os.path.basename(old_path)
+            if self.fm.rename(new_fobj, old_name):
+                old_fobj = File(old_path)
+                self.fm.bookmarks.update_path(new_path, old_fobj)
+                self.fm.tags.update_path(new_path, old_fobj.path)
+                undone.append(old_fobj)
+
+        if undone:
+            rename_pattern._undo_operations = None
+            self.fm.thisdir.pointed_obj = undone[0]
+            self.fm.thisfile = undone[0]
+            self.fm.notify('Undid {0} rename(s)'.format(len(undone)))
+            self.fm.reload_cwd()
+
+
 class relink(Command):
     """:relink <newpath>
 
