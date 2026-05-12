@@ -218,12 +218,20 @@ class TestBookmarkGroups:
         assert not bad
         assert "work" not in fm.bookmarks.list_groups()
 
-    def test_group_delete_default_error(self, setup_fm):
+    def test_group_delete_default_group_protected_error(self, setup_fm):
         fm = setup_fm
         _run_bookmark_command(fm, "bookmark group delete {0}".format(DEFAULT_GROUP if DEFAULT_GROUP else "''"))
 
         msg, bad = fm.get_last_notification()
-        assert "Cannot delete group" in msg
+        assert "Cannot delete group (not found or is default)" in msg
+        assert bad
+
+    def test_group_delete_nonexistent_group_error(self, setup_fm):
+        fm = setup_fm
+        _run_bookmark_command(fm, "bookmark group delete nonexistent_group")
+
+        msg, bad = fm.get_last_notification()
+        assert "Cannot delete group (not found or is default)" in msg
         assert bad
 
     def test_group_list(self, setup_fm):

@@ -196,7 +196,7 @@ class TestBookmarkGroups:
         assert not bmstore.remove_from_group("a", "work")
         assert not bmstore.remove_from_group("a", DEFAULT_GROUP)
 
-    def test_delete_group(self, tmpdir):
+    def test_delete_group_success(self, tmpdir):
         bookmarkfile = tmpdir.join("bookmarkfile")
         bmstore = NotValidatedBookmarks(str(bookmarkfile))
         bmstore.load()
@@ -213,7 +213,19 @@ class TestBookmarkGroups:
         assert "a" in bmstore.groups[DEFAULT_GROUP]
         assert "b" in bmstore.groups[DEFAULT_GROUP]
 
+    def test_delete_group_default_group_protected(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
         assert not bmstore.delete_group(DEFAULT_GROUP)
+        assert DEFAULT_GROUP in bmstore.list_groups()
+
+    def test_delete_group_nonexistent_group_returns_false(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
         assert not bmstore.delete_group("non_existent")
 
     def test_list_groups(self, tmpdir):
