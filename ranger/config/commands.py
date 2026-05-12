@@ -1342,14 +1342,10 @@ class rename_pattern(Command):
     """
 
     _undo_operations = None
-    _TMP_SUFFIX_RE = re.compile(r'\.__ranger_tmp__(\d+)?$')
 
     def __init__(self, *args, **kwargs):
         super(rename_pattern, self).__init__(*args, **kwargs)
-
-    @staticmethod
-    def _is_temp_name(name):
-        return bool(rename_pattern._TMP_SUFFIX_RE.search(name))
+        self._internal_temp_names = set()
 
     def execute(self):
         from functools import partial
@@ -1452,7 +1448,7 @@ class rename_pattern(Command):
                     tmp_to_original[dst_name] = src_name
                     name_to_fobj[dst_name] = new_fobj
                 elif op_type == 'phase2':
-                    if self._is_temp_name(src_name):
+                    if src_name in self._internal_temp_names:
                         original_name = tmp_to_original.get(src_name)
                         if original_name and original_name in name_to_fobj:
                             original_fobj = name_to_fobj[original_name]
@@ -1480,9 +1476,11 @@ class rename_pattern(Command):
             self.fm.reload_cwd()
 
     def _resolve_rename_order(self, rename_map, cwd):
+        import uuid
+
         operations = []
         remaining = dict(rename_map)
-        original_map = dict(rename_map)
+        self._internal_temp_names = set()
 
         def has_direct_conflict(src, dst):
             if dst in remaining:
@@ -1494,6 +1492,16 @@ class rename_pattern(Command):
                 return True
             return False
 
+        def generate_temp_name(base_name):
+            unique_id = uuid.uuid4().hex[:12]
+            tmp_name = base_name + '.__ranger_tmp__' + unique_id + '__'
+            while (os.path.exists(os.path.join(cwd, tmp_name)) or
+                   tmp_name in remaining.values() or
+                   tmp_name in remaining):
+                unique_id = uuid.uuid4().hex[:12]
+                tmp_name = base_name + '.__ranger_tmp__' + unique_id + '__'
+            return tmp_name
+
         max_iterations = len(rename_map) * 3 + 10
         iteration = 0
 
@@ -1501,7 +1509,7 @@ class rename_pattern(Command):
             iteration += 1
             progress = False
 
-            temp_sources = [s for s in remaining if self._is_temp_name(s)]
+            temp_sources = [s for s in remaining if s in self._internal_temp_names]
 
             for src in list(temp_sources):
                 if src in remaining:
@@ -1515,7 +1523,7 @@ class rename_pattern(Command):
                 continue
 
             for src in list(remaining.keys()):
-                if self._is_temp_name(src):
+                if src in self._internal_temp_names:
                     continue
                 dst = remaining[src]
                 if not has_direct_conflict(src, dst):
@@ -1530,30 +1538,20 @@ class rename_pattern(Command):
 
             if cycle_members:
                 for src in list(cycle_members):
-                    if src in remaining and not self._is_temp_name(src):
-                        tmp_name = src + '.__ranger_tmp__'
-                        counter = 1
-                        while (os.path.exists(os.path.join(cwd, tmp_name)) or
-                               tmp_name in remaining.values() or
-                               tmp_name in remaining):
-                            tmp_name = src + '.__ranger_tmp__' + str(counter)
-                            counter += 1
+                    if src in remaining and src not in self._internal_temp_names:
+                        tmp_name = generate_temp_name(src)
+                        self._internal_temp_names.add(tmp_name)
                         operations.append(('phase1', src, tmp_name))
                         remaining[tmp_name] = remaining[src]
                         del remaining[src]
                         progress = True
             else:
                 for src in list(remaining.keys()):
-                    if self._is_temp_name(src):
+                    if src in self._internal_temp_names:
                         continue
                     dst = remaining[src]
-                    tmp_name = src + '.__ranger_tmp__'
-                    counter = 1
-                    while (os.path.exists(os.path.join(cwd, tmp_name)) or
-                           tmp_name in remaining.values() or
-                           tmp_name in remaining):
-                        tmp_name = src + '.__ranger_tmp__' + str(counter)
-                        counter += 1
+                    tmp_name = generate_temp_name(src)
+                    self._internal_temp_names.add(tmp_name)
                     operations.append(('phase1', src, tmp_name))
                     remaining[tmp_name] = dst
                     del remaining[src]

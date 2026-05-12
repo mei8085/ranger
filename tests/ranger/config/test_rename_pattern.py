@@ -306,7 +306,7 @@ class TestTwoPhaseRenameOrder(unittest.TestCase):
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_temp_name_conflict_uses_counter(self):
+    def test_temp_name_conflict_uses_uuid(self):
         temp_dir = tempfile.mkdtemp()
         try:
             open(os.path.join(temp_dir, 'a.txt'), 'w').close()
@@ -319,13 +319,16 @@ class TestTwoPhaseRenameOrder(unittest.TestCase):
 
             phase1_ops = [op for op in ops if op[0] == 'phase1']
             temp_names = [op[2] for op in phase1_ops]
-            has_counter = any('.__ranger_tmp__1' in t or '.__ranger_tmp__2' in t
-                              for t in temp_names)
-            self.assertTrue(has_counter)
+            for temp_name in temp_names:
+                self.assertIn('.__ranger_tmp__', temp_name)
+                self.assertTrue(temp_name.endswith('__'))
+                hex_part = temp_name.split('.__ranger_tmp__')[1].rstrip('__')
+                self.assertTrue(len(hex_part) >= 12)
+                self.assertTrue(all(c in '0123456789abcdef' for c in hex_part))
         finally:
             shutil.rmtree(temp_dir)
 
-    def test_numbered_temp_name_phase2_counted_properly(self):
+    def test_existing_temp_files_on_disk_use_uuid(self):
         temp_dir = tempfile.mkdtemp()
         try:
             open(os.path.join(temp_dir, 'a.txt'), 'w').close()
@@ -347,9 +350,11 @@ class TestTwoPhaseRenameOrder(unittest.TestCase):
             self.assertEqual(mapping, rename_map)
 
             phase1_temp_names = [op[2] for op in ops if op[0] == 'phase1']
-            has_numbered = all('.__ranger_tmp__1' in t or '.__ranger_tmp__2' in t
-                               for t in phase1_temp_names)
-            self.assertTrue(has_numbered)
+            for temp_name in phase1_temp_names:
+                self.assertIn('.__ranger_tmp__', temp_name)
+                self.assertTrue(temp_name.endswith('__'))
+                hex_part = temp_name.split('.__ranger_tmp__')[1].rstrip('__')
+                self.assertTrue(len(hex_part) >= 12)
         finally:
             shutil.rmtree(temp_dir)
 
@@ -365,39 +370,152 @@ class TestTwoPhaseRenameOrder(unittest.TestCase):
             rename_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
             ops = cmd._resolve_rename_order(rename_map, temp_dir)
 
-            phase1_ops = [op for op in ops if op[0] == 'phase1']
-            phase1_temp_names = [op[2] for op in phase1_ops if 'a.txt' in op[1]]
-            if phase1_temp_names:
-                self.assertIn('.__ranger_tmp__2', phase1_temp_names[0])
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            self.assertEqual(phase1_count, 2)
+            self.assertEqual(phase2_count, 2)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_user_file_with_temp_suffix_direct_rename(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            user_file = 'my_file.__ranger_tmp__'
+            open(os.path.join(temp_dir, user_file), 'w').close()
+            open(os.path.join(temp_dir, 'other.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {user_file: 'renamed.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            direct_count = sum(1 for op in ops if op[0] == 'direct')
+            self.assertEqual(direct_count, 1)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_user_file_with_temp_suffix_in_swap(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            user_file_a = 'file_a.__ranger_tmp__'
+            user_file_b = 'file_b.__ranger_tmp__'
+            open(os.path.join(temp_dir, user_file_a), 'w').close()
+            open(os.path.join(temp_dir, user_file_b), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {user_file_a: user_file_b, user_file_b: user_file_a}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            self.assertEqual(phase1_count, 2)
+            self.assertEqual(phase2_count, 2)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_user_file_with_numbered_temp_suffix(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            user_file = 'my_data.__ranger_tmp__123'
+            open(os.path.join(temp_dir, user_file), 'w').close()
+            open(os.path.join(temp_dir, 'normal.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {user_file: 'final.txt', 'normal.txt': 'renamed.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            direct_count = sum(1 for op in ops if op[0] == 'direct')
+            self.assertEqual(direct_count, 2)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_mixed_user_temp_files_and_internal_temp(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            user_temp_file = 'user.__ranger_tmp__'
+            normal_file = 'normal.txt'
+            open(os.path.join(temp_dir, user_temp_file), 'w').close()
+            open(os.path.join(temp_dir, normal_file), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {user_temp_file: normal_file, normal_file: user_temp_file}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            self.assertEqual(phase1_count, 2)
+            self.assertEqual(phase2_count, 2)
+
+            phase1_temp_names = set(op[2] for op in ops if op[0] == 'phase1')
+            for temp_name in phase1_temp_names:
+                self.assertIn('.__ranger_tmp__', temp_name)
+                self.assertTrue(temp_name.endswith('__'))
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
         finally:
             shutil.rmtree(temp_dir)
 
 
-class TestTempNameRecognition(unittest.TestCase):
+class TestInternalTempNameUniqueness(unittest.TestCase):
     def setUp(self):
         from ranger.config.commands import rename_pattern
         self.rename_pattern = rename_pattern
 
-    def test_recognizes_basic_temp_name(self):
-        self.assertTrue(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__'))
+    def _create_instance(self):
+        cmd_instance = self.rename_pattern(':rename_pattern test')
+        return cmd_instance
 
-    def test_recognizes_numbered_temp_name(self):
-        self.assertTrue(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__1'))
-        self.assertTrue(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__123'))
-        self.assertTrue(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__999'))
+    def test_internal_temp_names_are_unique(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'c.txt'), 'w').close()
 
-    def test_not_recognizes_regular_files(self):
-        self.assertFalse(self.rename_pattern._is_temp_name('a.txt'))
-        self.assertFalse(self.rename_pattern._is_temp_name('b.jpg'))
-        self.assertFalse(self.rename_pattern._is_temp_name('file_without_suffix'))
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'c.txt', 'c.txt': 'a.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
 
-    def test_not_recognizes_partial_match(self):
-        self.assertFalse(self.rename_pattern._is_temp_name('__ranger_tmp__.txt'))
-        self.assertFalse(self.rename_pattern._is_temp_name('a.__ranger_tmp__.txt'))
-        self.assertFalse(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__.bak'))
+            phase1_temp_names = [op[2] for op in ops if op[0] == 'phase1']
+            self.assertEqual(len(phase1_temp_names), len(set(phase1_temp_names)))
 
-    def test_not_recognizes_empty_suffix(self):
-        self.assertFalse(self.rename_pattern._is_temp_name('a.txt.__ranger_tmp__.'))
+            for temp_name in phase1_temp_names:
+                self.assertIn('.__ranger_tmp__', temp_name)
+                self.assertTrue(temp_name.endswith('__'))
+                hex_part = temp_name.split('.__ranger_tmp__')[1].rstrip('__')
+                self.assertTrue(len(hex_part) >= 12)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_internal_temp_names_tracked_properly(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_temp_names = set(op[2] for op in ops if op[0] == 'phase1')
+            self.assertEqual(phase1_temp_names, cmd._internal_temp_names)
+
+            for temp_name in phase1_temp_names:
+                self.assertIn(temp_name, cmd._internal_temp_names)
+        finally:
+            shutil.rmtree(temp_dir)
 
 
 if __name__ == '__main__':
