@@ -6,6 +6,7 @@ import time
 import pytest
 
 from ranger.container.bookmarks import Bookmarks, DEFAULT_GROUP, HAS_YAML
+from ranger.core.shared import FileManagerAware
 
 
 class NotValidatedBookmarks(Bookmarks):
@@ -13,7 +14,23 @@ class NotValidatedBookmarks(Bookmarks):
         return True
 
 
-def testbookmarks(tmpdir):
+class MockFM:
+    def __init__(self):
+        self.notifications = []
+
+    def notify(self, msg, bad=False):
+        self.notifications.append((msg, bad))
+
+
+@pytest.fixture
+def setup_fm():
+    fm = MockFM()
+    FileManagerAware.fm_set(fm)
+    yield fm
+    FileManagerAware.fm_set(None)
+
+
+def testbookmarks(tmpdir, setup_fm):
     # Bookmarks point to directory location and allow fast access to
     # 'favorite' directories. They are persisted to a bookmark file, plain text.
     bookmarkfile = tmpdir.join("bookmarkfile")
@@ -63,7 +80,7 @@ def testbookmarks(tmpdir):
     secondstore.update_if_outdated()
 
 
-def test_bookmark_symlink(tmpdir):
+def test_bookmark_symlink(tmpdir, setup_fm):
     # Initialize plain file and symlink paths
     bookmarkfile_link = tmpdir.join("bookmarkfile")
     bookmarkfile_orig = tmpdir.join("bookmarkfile.orig")
@@ -336,7 +353,7 @@ class TestBookmarkYaml:
 
 
 class TestBookmarkPersistence:
-    def test_save_load_with_groups(self, tmpdir):
+    def test_save_load_with_groups(self, tmpdir, setup_fm):
         bookmarkfile = tmpdir.join("bookmarkfile")
         bmstore = NotValidatedBookmarks(str(bookmarkfile))
         bmstore.load()
