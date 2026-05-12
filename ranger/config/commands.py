@@ -1395,27 +1395,182 @@ class rename_pattern(Command):
     def _perform_rename(self, selections, new_names):
         from ranger.container.file import File
 
-        undo_operations = []
-        performed = []
+        cwd = self.fm.thisdir.path
+        rename_map = {}
+        name_to_fobj = {}
 
         for old_fobj, new_name in zip(selections, new_names):
-            old_path = old_fobj.path
-            if new_name == old_fobj.relative_path:
-                continue
+            if new_name != old_fobj.relative_path:
+                old_name = old_fobj.relative_path
+                rename_map[old_name] = new_name
+                name_to_fobj[old_name] = old_fobj
 
-            if self.fm.rename(old_fobj, new_name):
-                new_fobj = File(os.path.join(self.fm.thisdir.path, new_name))
-                self.fm.bookmarks.update_path(old_path, new_fobj)
-                self.fm.tags.update_path(old_path, new_fobj.path)
-                undo_operations.append((new_fobj.path, old_path))
-                performed.append(new_fobj)
+        if not rename_map:
+            return
+
+        operations = self._resolve_rename_order(rename_map, cwd)
+
+        undo_operations = []
+        performed = []
+        failed = False
+
+        for step in operations:
+            op_type, src_name, dst_name = step
+            src_path = os.path.join(cwd, src_name)
+            dst_path = os.path.join(cwd, dst_name)
+
+            if src_name in name_to_fobj:
+                fobj = name_to_fobj[src_name]
+            else:
+                from ranger.container.file import File as FObj
+                fobj = FObj(src_path)
+
+            if self.fm.rename(fobj, dst_name):
+                new_fobj = File(dst_path)
+
+                if op_type == 'direct':
+                    old_path = os.path.join(cwd, src_name)
+                    undo_operations.append((dst_path, old_path))
+                    self.fm.bookmarks.update_path(old_path, new_fobj)
+                    self.fm.tags.update_path(old_path, new_fobj.path)
+                    performed.append(new_fobj)
+                    name_to_fobj[dst_name] = new_fobj
+                elif op_type == 'phase1':
+                    name_to_fobj[dst_name] = new_fobj
+                elif op_type == 'phase2':
+                    if src_name.endswith('.__ranger_tmp__'):
+                        base_name = src_name[:-len('.__ranger_tmp__')]
+                        if base_name in name_to_fobj:
+                            original_fobj = name_to_fobj[base_name]
+                            old_path = original_fobj.path
+                            undo_operations.append((dst_path, old_path))
+                            self.fm.bookmarks.update_path(old_path, new_fobj)
+                            self.fm.tags.update_path(old_path, new_fobj.path)
+                            performed.append(new_fobj)
+                        name_to_fobj[dst_name] = new_fobj
+                    else:
+                        name_to_fobj[dst_name] = new_fobj
+            else:
+                failed = True
+                self.fm.notify(
+                    'Failed to rename: {0} -> {1}'.format(src_name, dst_name),
+                    bad=True
+                )
+                break
 
         if performed:
-            rename_pattern._undo_operations = undo_operations
+            rename_pattern._undo_operations = list(reversed(undo_operations))
             self.fm.thisdir.pointed_obj = performed[0]
             self.fm.thisfile = performed[0]
             self.fm.notify('Renamed {0} file(s)'.format(len(performed)))
             self.fm.reload_cwd()
+
+    def _resolve_rename_order(self, rename_map, cwd):
+        operations = []
+        remaining = dict(rename_map)
+        original_map = dict(rename_map)
+
+        def has_direct_conflict(src, dst):
+            if dst in remaining:
+                return True
+            if os.path.exists(os.path.join(cwd, dst)):
+                for s, d in remaining.items():
+                    if d == dst:
+                        return False
+                return True
+            return False
+
+        max_iterations = len(rename_map) * 3 + 10
+        iteration = 0
+
+        while remaining and iteration < max_iterations:
+            iteration += 1
+            progress = False
+
+            temp_sources = [s for s in remaining if s.endswith('.__ranger_tmp__') or
+                            (s.endswith('.__ranger_tmp__') and len(s) > len('.__ranger_tmp__') and
+                             s[-len('.__ranger_tmp__')-1].isdigit())]
+
+            for src in list(temp_sources):
+                if src in remaining:
+                    dst = remaining[src]
+                    if not has_direct_conflict(src, dst):
+                        operations.append(('phase2', src, dst))
+                        del remaining[src]
+                        progress = True
+
+            if progress:
+                continue
+
+            for src in list(remaining.keys()):
+                if src.endswith('.__ranger_tmp__'):
+                    continue
+                dst = remaining[src]
+                if not has_direct_conflict(src, dst):
+                    operations.append(('direct', src, dst))
+                    del remaining[src]
+                    progress = True
+
+            if progress:
+                continue
+
+            cycle_members = self._find_cycle(remaining)
+
+            if cycle_members:
+                for src in list(cycle_members):
+                    if src in remaining:
+                        tmp_name = src + '.__ranger_tmp__'
+                        counter = 1
+                        while (os.path.exists(os.path.join(cwd, tmp_name)) or
+                               tmp_name in remaining.values() or
+                               tmp_name in remaining):
+                            tmp_name = src + '.__ranger_tmp__' + str(counter)
+                            counter += 1
+                        operations.append(('phase1', src, tmp_name))
+                        remaining[tmp_name] = remaining[src]
+                        del remaining[src]
+                        progress = True
+            else:
+                for src in list(remaining.keys()):
+                    if src.endswith('.__ranger_tmp__'):
+                        continue
+                    dst = remaining[src]
+                    tmp_name = src + '.__ranger_tmp__'
+                    counter = 1
+                    while (os.path.exists(os.path.join(cwd, tmp_name)) or
+                           tmp_name in remaining.values() or
+                           tmp_name in remaining):
+                        tmp_name = src + '.__ranger_tmp__' + str(counter)
+                        counter += 1
+                    operations.append(('phase1', src, tmp_name))
+                    remaining[tmp_name] = dst
+                    del remaining[src]
+                    progress = True
+
+            if not progress:
+                break
+
+        return operations
+
+    @staticmethod
+    def _find_cycle(remaining):
+        for start in remaining:
+            visited = set()
+            path = []
+            current = start
+            while current is not None:
+                if current in path:
+                    idx = path.index(current)
+                    return set(path[idx:])
+                if current in visited:
+                    break
+                visited.add(current)
+                path.append(current)
+                if current in remaining:
+                    current = remaining[current]
+                else:
+                    current = None
+        return set()
 
     def quick(self):
         if len(self.args) < 3:

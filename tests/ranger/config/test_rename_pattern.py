@@ -144,5 +144,187 @@ class TestRegexErrorHandling(unittest.TestCase):
         self.assertIsNotNone(regex)
 
 
+class TestCycleDetection(unittest.TestCase):
+    def setUp(self):
+        from ranger.config.commands import rename_pattern
+        self.rename_pattern = rename_pattern
+
+    def test_simple_swap_cycle(self):
+        remaining = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+        cycle = self.rename_pattern._find_cycle(remaining)
+        self.assertEqual(cycle, {'a.txt', 'b.txt'})
+
+    def test_three_way_cycle(self):
+        remaining = {'a.txt': 'b.txt', 'b.txt': 'c.txt', 'c.txt': 'a.txt'}
+        cycle = self.rename_pattern._find_cycle(remaining)
+        self.assertEqual(cycle, {'a.txt', 'b.txt', 'c.txt'})
+
+    def test_no_cycle_linear_chain(self):
+        remaining = {'a.txt': 'b.txt', 'b.txt': 'c.txt'}
+        cycle = self.rename_pattern._find_cycle(remaining)
+        self.assertEqual(cycle, set())
+
+    def test_no_cycle_standalone(self):
+        remaining = {'a.txt': 'new_a.txt', 'b.txt': 'new_b.txt'}
+        cycle = self.rename_pattern._find_cycle(remaining)
+        self.assertEqual(cycle, set())
+
+    def test_partial_cycle_with_chain(self):
+        remaining = {
+            'a.txt': 'b.txt',
+            'b.txt': 'a.txt',
+            'c.txt': 'd.txt',
+            'd.txt': 'e.txt'
+        }
+        cycle = self.rename_pattern._find_cycle(remaining)
+        self.assertTrue('a.txt' in cycle and 'b.txt' in cycle)
+
+
+class TestTwoPhaseRenameOrder(unittest.TestCase):
+    def setUp(self):
+        from ranger.config.commands import rename_pattern
+        self.rename_pattern = rename_pattern
+
+    def _create_instance(self):
+        from ranger.api.commands import Command
+        cmd_instance = self.rename_pattern(':rename_pattern test')
+        return cmd_instance
+
+    def _operations_to_mapping(self, operations):
+        result = {}
+        phase1_map = {}
+        for op in operations:
+            op_type, src, dst = op
+            if op_type == 'direct':
+                result[src] = dst
+            elif op_type == 'phase1':
+                phase1_map[src] = dst
+            elif op_type == 'phase2':
+                original = None
+                for orig, tmp in phase1_map.items():
+                    if tmp == src:
+                        original = orig
+                        break
+                if original:
+                    result[original] = dst
+        return result
+
+    def test_no_conflict_all_direct(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'A.txt', 'b.txt': 'B.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+            for op in ops:
+                self.assertEqual(op[0], 'direct')
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_simple_swap_uses_two_phase(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            self.assertTrue(any(op[0] == 'phase1' for op in ops))
+            self.assertTrue(any(op[0] == 'phase2' for op in ops))
+
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            self.assertEqual(phase1_count, 2)
+            self.assertEqual(phase2_count, 2)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_three_way_cycle_uses_two_phase(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'c.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'c.txt', 'c.txt': 'a.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            self.assertEqual(phase1_count, 3)
+            self.assertEqual(phase2_count, 3)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_mixed_cycle_and_direct(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {
+                'a.txt': 'b.txt',
+                'b.txt': 'a.txt',
+                'c.txt': 'C.txt'
+            }
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_count = sum(1 for op in ops if op[0] == 'phase1')
+            phase2_count = sum(1 for op in ops if op[0] == 'phase2')
+            direct_count = sum(1 for op in ops if op[0] == 'direct')
+            self.assertEqual(phase1_count, 2)
+            self.assertEqual(phase2_count, 2)
+            self.assertEqual(direct_count, 1)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_linear_chain_no_cycle(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'c.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            mapping = self._operations_to_mapping(ops)
+            self.assertEqual(mapping, rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_temp_name_conflict_uses_counter(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'a.txt.__ranger_tmp__'), 'w').close()
+
+            cmd = self._create_instance()
+            rename_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+            ops = cmd._resolve_rename_order(rename_map, temp_dir)
+
+            phase1_ops = [op for op in ops if op[0] == 'phase1']
+            temp_names = [op[2] for op in phase1_ops]
+            has_counter = any('.__ranger_tmp__1' in t or '.__ranger_tmp__2' in t
+                              for t in temp_names)
+            self.assertTrue(has_counter)
+        finally:
+            shutil.rmtree(temp_dir)
+
+
 if __name__ == '__main__':
     unittest.main()
