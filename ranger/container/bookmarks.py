@@ -19,7 +19,7 @@ from ranger.container import fsobject
 from ranger.core.shared import FileManagerAware
 
 ALLOWED_KEYS = string.ascii_letters + string.digits + "`'"
-DEFAULT_GROUP = 'default'
+DEFAULT_GROUP = ''
 
 
 class Bookmarks(FileManagerAware):

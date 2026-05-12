@@ -2226,6 +2226,8 @@ class bookmark(Command):
                 if not group_name:
                     self.fm.notify("Usage: :bookmark group delete <name>", bad=True)
                     return
+                if group_name == '__default__':
+                    group_name = DEFAULT_GROUP
                 if self.fm.bookmarks.delete_group(group_name):
                     self.fm.notify("Deleted group: {0}".format(group_name))
                 else:
