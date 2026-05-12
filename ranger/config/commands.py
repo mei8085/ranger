@@ -2135,3 +2135,155 @@ class paste_ext(Command):
 
     def execute(self):
         return self.fm.paste(make_safe_path=paste_ext.make_safe_path)
+
+
+class save_search(Command):
+    """:save_search [-d] <name>
+
+    Save the current search result or condition.
+
+    Flags:
+     -d    Save as dynamic search (store the command to re-execute)
+           Without this flag, saves as static search (snapshot of current files)
+    """
+
+    DYNAMIC = "d"
+
+    def execute(self):
+        from ranger.container.saved_searches import SavedSearch
+
+        name = self.arg(1)
+        flags, _ = self.parse_flags()
+
+        if not name:
+            self.fm.notify("Syntax: save_search [-d] <name>", bad=True)
+            return
+
+        if self.DYNAMIC in flags:
+            if self.fm.thistab.last_search is None:
+                self.fm.notify("No recent search to save", bad=True)
+                return
+            self.fm.saved_searches.save_dynamic(name, str(self.fm.thistab.last_search.pattern))
+            self.fm.notify("Saved dynamic search: %s" % name)
+        else:
+            if self.fm.thisdir.marked_items:
+                paths = [f.path for f in self.fm.thistab.get_selection()]
+            elif self.fm.thisfile:
+                paths = [self.fm.thisfile.path]
+            else:
+                self.fm.notify("No files selected or no current file", bad=True)
+                return
+            self.fm.saved_searches.save_static(name, paths)
+            self.fm.notify("Saved static search: %s (%d files)" % (name, len(paths)))
+
+    def tab(self, tabnum):
+        existing = self.fm.saved_searches.list()
+        return [self.start(1) + n for n in existing if n.startswith(self.arg(1))]
+
+
+class saved(Command):
+    """:saved [<name>]
+
+    Open a saved search. Without arguments, list all saved searches.
+
+    For static searches: shows the saved files in a narrow view.
+    For dynamic searches: re-executes the stored search pattern.
+    """
+
+    def execute(self):
+        from ranger.container.saved_searches import SavedSearch
+
+        name = self.arg(1)
+        if not name:
+            searches = self.fm.saved_searches.list()
+            if not searches:
+                self.fm.notify("No saved searches")
+            else:
+                lines = ["Saved searches:"]
+                for s in self.fm.saved_searches:
+                    if s.type == SavedSearch.STATIC:
+                        count = len(s.data.get('paths', []))
+                        lines.append("  [static] %s: %d files" % (s.name, count))
+                    else:
+                        lines.append("  [dynamic] %s: %s" % (s.name, s.data.get('command', '')))
+                pager = self.fm.ui.open_pager()
+                pager.set_source(lines)
+            return
+
+        saved_search = self.fm.saved_searches.get(name)
+        if saved_search is None:
+            self.fm.notify("Saved search not found: %s" % name, bad=True)
+            return
+
+        if saved_search.type == SavedSearch.STATIC:
+            paths = saved_search.data.get('paths', [])
+            if not paths:
+                self.fm.notify("Saved search is empty: %s" % name, bad=True)
+                return
+            self._apply_static_search(paths)
+        else:
+            command = saved_search.data.get('command', '')
+            if not command:
+                self.fm.notify("Saved search has no command: %s" % name, bad=True)
+                return
+            try:
+                import re
+                regex = re.compile(command)
+                self.fm.thistab.last_search = regex
+                self.fm.set_search_method(order="search")
+                self.fm.thisdir.temporary_filter = regex
+                self.fm.thisdir.refilter()
+                self.fm.notify("Dynamic search: %s" % name)
+            except re.error:
+                self.fm.notify("Invalid saved search pattern: %s" % command, bad=True)
+
+    def _apply_static_search(self, paths):
+        from os.path import exists
+
+        groups = self.fm.group_paths_by_dirname(paths)
+        if not groups:
+            return
+
+        dirname = max(groups.keys(), key=lambda k: len(groups[k]))
+        basenames = groups[dirname]
+
+        valid_basenames = []
+        for bn in basenames:
+            full = os.path.join(dirname, bn)
+            if exists(full):
+                valid_basenames.append(bn)
+
+        if not valid_basenames:
+            self.fm.notify("None of the saved files exist anymore", bad=True)
+            return
+
+        self.fm.cd(dirname)
+        self.fm.thisdir.narrow_filter = valid_basenames
+        self.fm.thisdir.refilter()
+        self.fm.notify("Static search loaded (%d files)" % len(valid_basenames))
+
+    def tab(self, tabnum):
+        existing = self.fm.saved_searches.list()
+        return [self.start(1) + n for n in existing if n.startswith(self.arg(1))]
+
+
+class saved_delete(Command):
+    """:saved_delete <name>
+
+    Delete a saved search.
+    """
+
+    def execute(self):
+        name = self.arg(1)
+        if not name:
+            self.fm.notify("Syntax: saved_delete <name>", bad=True)
+            return
+
+        if self.fm.saved_searches.delete(name):
+            self.fm.notify("Deleted saved search: %s" % name)
+        else:
+            self.fm.notify("Saved search not found: %s" % name, bad=True)
+
+    def tab(self, tabnum):
+        existing = self.fm.saved_searches.list()
+        return [self.start(1) + n for n in existing if n.startswith(self.arg(1))]

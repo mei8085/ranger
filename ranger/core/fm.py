@@ -22,6 +22,7 @@ import ranger.api
 from ranger.container import settings
 from ranger.container.bookmarks import Bookmarks
 from ranger.container.directory import Directory
+from ranger.container.saved_searches import SavedSearches
 from ranger.container.tags import Tags, TagsDummy
 from ranger.core.actions import Actions
 from ranger.core.loader import Loader
@@ -96,6 +97,7 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
         self.current_tab = 1
         self.tabs = {}
         self.tags = tags
+        self.saved_searches = None
         self.restorable_tabs = deque([], ranger.MAX_RESTORABLE_TABS)
         self.previews = {}
         self.default_linemodes = deque()
@@ -170,6 +172,16 @@ class FM(Actions,  # pylint: disable=too-many-instance-attributes
             self.bookmarks.load()
             self.bookmarks.enable_saving_backtick_bookmark(
                 self.settings.save_backtick_bookmark)
+
+        if self.saved_searches is None:
+            if ranger.args.clean:
+                searchfile = None
+            else:
+                searchfile = self.datapath('saved_searches')
+            self.saved_searches = SavedSearches(
+                searchfile=searchfile,
+                autosave=self.settings.autosave_bookmarks)
+            self.saved_searches.load()
 
         self.ui.setup_curses()
         self.ui.initialize()
