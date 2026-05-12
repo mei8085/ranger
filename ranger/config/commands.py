@@ -2152,8 +2152,7 @@ class save_search(Command):
     def execute(self):
         from ranger.container.saved_searches import SavedSearch
 
-        name = self.arg(1)
-        flags, _ = self.parse_flags()
+        flags, name = self.parse_flags()
 
         if not name:
             self.fm.notify("Syntax: save_search [-d] <name>", bad=True)
@@ -2176,7 +2175,8 @@ class save_search(Command):
 
     def tab(self, tabnum):
         existing = self.fm.saved_searches.list()
-        return [self.start(1) + n for n in existing if n.startswith(self.arg(1))]
+        _, current_prefix = self.parse_flags()
+        return [self.line.split()[0] + " " + n for n in existing if n.startswith(current_prefix)]
 
 
 class saved(Command):
