@@ -1342,9 +1342,14 @@ class rename_pattern(Command):
     """
 
     _undo_operations = None
+    _TMP_SUFFIX_RE = re.compile(r'\.__ranger_tmp__(\d+)?$')
 
     def __init__(self, *args, **kwargs):
         super(rename_pattern, self).__init__(*args, **kwargs)
+
+    @staticmethod
+    def _is_temp_name(name):
+        return bool(rename_pattern._TMP_SUFFIX_RE.search(name))
 
     def execute(self):
         from functools import partial
@@ -1414,6 +1419,8 @@ class rename_pattern(Command):
         performed = []
         failed = False
 
+        tmp_to_original = {}
+
         for step in operations:
             op_type, src_name, dst_name = step
             src_path = os.path.join(cwd, src_name)
@@ -1421,6 +1428,12 @@ class rename_pattern(Command):
 
             if src_name in name_to_fobj:
                 fobj = name_to_fobj[src_name]
+            elif src_name in tmp_to_original:
+                original_name = tmp_to_original[src_name]
+                fobj = name_to_fobj.get(original_name)
+                if fobj is None:
+                    from ranger.container.file import File as FObj
+                    fobj = FObj(src_path)
             else:
                 from ranger.container.file import File as FObj
                 fobj = FObj(src_path)
@@ -1436,12 +1449,13 @@ class rename_pattern(Command):
                     performed.append(new_fobj)
                     name_to_fobj[dst_name] = new_fobj
                 elif op_type == 'phase1':
+                    tmp_to_original[dst_name] = src_name
                     name_to_fobj[dst_name] = new_fobj
                 elif op_type == 'phase2':
-                    if src_name.endswith('.__ranger_tmp__'):
-                        base_name = src_name[:-len('.__ranger_tmp__')]
-                        if base_name in name_to_fobj:
-                            original_fobj = name_to_fobj[base_name]
+                    if self._is_temp_name(src_name):
+                        original_name = tmp_to_original.get(src_name)
+                        if original_name and original_name in name_to_fobj:
+                            original_fobj = name_to_fobj[original_name]
                             old_path = original_fobj.path
                             undo_operations.append((dst_path, old_path))
                             self.fm.bookmarks.update_path(old_path, new_fobj)
@@ -1487,9 +1501,7 @@ class rename_pattern(Command):
             iteration += 1
             progress = False
 
-            temp_sources = [s for s in remaining if s.endswith('.__ranger_tmp__') or
-                            (s.endswith('.__ranger_tmp__') and len(s) > len('.__ranger_tmp__') and
-                             s[-len('.__ranger_tmp__')-1].isdigit())]
+            temp_sources = [s for s in remaining if self._is_temp_name(s)]
 
             for src in list(temp_sources):
                 if src in remaining:
@@ -1503,7 +1515,7 @@ class rename_pattern(Command):
                 continue
 
             for src in list(remaining.keys()):
-                if src.endswith('.__ranger_tmp__'):
+                if self._is_temp_name(src):
                     continue
                 dst = remaining[src]
                 if not has_direct_conflict(src, dst):
@@ -1518,7 +1530,7 @@ class rename_pattern(Command):
 
             if cycle_members:
                 for src in list(cycle_members):
-                    if src in remaining:
+                    if src in remaining and not self._is_temp_name(src):
                         tmp_name = src + '.__ranger_tmp__'
                         counter = 1
                         while (os.path.exists(os.path.join(cwd, tmp_name)) or
@@ -1532,7 +1544,7 @@ class rename_pattern(Command):
                         progress = True
             else:
                 for src in list(remaining.keys()):
-                    if src.endswith('.__ranger_tmp__'):
+                    if self._is_temp_name(src):
                         continue
                     dst = remaining[src]
                     tmp_name = src + '.__ranger_tmp__'
