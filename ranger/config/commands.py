@@ -2144,7 +2144,7 @@ class save_search(Command):
 
     Flags:
      -d    Save as dynamic search (store the command to re-execute)
-           Without this flag, saves as static search (snapshot of current files)
+           Without this flag, saves as static search (snapshot of current filtered files)
     """
 
     DYNAMIC = "d"
@@ -2166,13 +2166,11 @@ class save_search(Command):
             self.fm.saved_searches.save_dynamic(name, str(self.fm.thistab.last_search.pattern))
             self.fm.notify("Saved dynamic search: %s" % name)
         else:
-            if self.fm.thisdir.marked_items:
-                paths = [f.path for f in self.fm.thistab.get_selection()]
-            elif self.fm.thisfile:
-                paths = [self.fm.thisfile.path]
-            else:
-                self.fm.notify("No files selected or no current file", bad=True)
+            files = self.fm.thisdir.files
+            if not files:
+                self.fm.notify("No files in current view to save", bad=True)
                 return
+            paths = [f.path for f in files]
             self.fm.saved_searches.save_static(name, paths)
             self.fm.notify("Saved static search: %s (%d files)" % (name, len(paths)))
 
