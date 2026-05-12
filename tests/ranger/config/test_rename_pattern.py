@@ -120,16 +120,117 @@ class TestRenamePatternDetectConflicts(unittest.TestCase):
 
 
 class TestUndoRenameBasic(unittest.TestCase):
-    def test_undo_operations_storage(self):
+    def test_undo_info_storage(self):
         from ranger.config.commands import rename_pattern, undo_rename
 
-        rename_pattern._undo_operations = None
-        self.assertIsNone(rename_pattern._undo_operations)
+        rename_pattern._undo_info = None
+        self.assertIsNone(rename_pattern._undo_info)
 
-        test_ops = [('/path/new1.txt', '/path/old1.txt'), ('/path/new2.txt', '/path/old2.txt')]
-        rename_pattern._undo_operations = test_ops
-        self.assertEqual(rename_pattern._undo_operations, test_ops)
-        rename_pattern._undo_operations = None
+        test_info = {
+            'cwd': '/test/dir',
+            'inverse_rename_map': {'new.txt': 'old.txt'},
+            'original_rename_map': {'old.txt': 'new.txt'}
+        }
+        rename_pattern._undo_info = test_info
+        self.assertEqual(rename_pattern._undo_info, test_info)
+        rename_pattern._undo_info = None
+
+
+class TestUndoRenameWithCycles(unittest.TestCase):
+    def setUp(self):
+        from ranger.config.commands import rename_pattern
+        self.rename_pattern = rename_pattern
+        self.rename_pattern._undo_info = None
+
+    def _create_instance(self):
+        cmd_instance = self.rename_pattern(':rename_pattern test')
+        return cmd_instance
+
+    def test_simple_swap_undo_order(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            original_rename_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+            inverse_rename_map = {'b.txt': 'a.txt', 'a.txt': 'b.txt'}
+
+            forward_ops = cmd._resolve_rename_order(original_rename_map, temp_dir)
+            inverse_ops = cmd._resolve_rename_order(inverse_rename_map, temp_dir)
+
+            forward_phase1_count = sum(1 for op in forward_ops if op[0] == 'phase1')
+            forward_phase2_count = sum(1 for op in forward_ops if op[0] == 'phase2')
+            self.assertEqual(forward_phase1_count, 2)
+            self.assertEqual(forward_phase2_count, 2)
+
+            inverse_phase1_count = sum(1 for op in inverse_ops if op[0] == 'phase1')
+            inverse_phase2_count = sum(1 for op in inverse_ops if op[0] == 'phase2')
+            self.assertEqual(inverse_phase1_count, 2)
+            self.assertEqual(inverse_phase2_count, 2)
+
+            def ops_to_mapping(ops_list):
+                result = {}
+                phase1_map = {}
+                for op in ops_list:
+                    op_type, src, dst = op
+                    if op_type == 'direct':
+                        result[src] = dst
+                    elif op_type == 'phase1':
+                        phase1_map[src] = dst
+                    elif op_type == 'phase2':
+                        for orig, tmp in phase1_map.items():
+                            if tmp == src:
+                                result[orig] = dst
+                                break
+                return result
+
+            forward_mapping = ops_to_mapping(forward_ops)
+            self.assertEqual(forward_mapping, original_rename_map)
+
+            inverse_mapping = ops_to_mapping(inverse_ops)
+            self.assertEqual(inverse_mapping, inverse_rename_map)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_three_way_cycle_undo_order(self):
+        temp_dir = tempfile.mkdtemp()
+        try:
+            open(os.path.join(temp_dir, 'a.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'b.txt'), 'w').close()
+            open(os.path.join(temp_dir, 'c.txt'), 'w').close()
+
+            cmd = self._create_instance()
+            original_rename_map = {'a.txt': 'b.txt', 'b.txt': 'c.txt', 'c.txt': 'a.txt'}
+            inverse_rename_map = {'b.txt': 'a.txt', 'c.txt': 'b.txt', 'a.txt': 'c.txt'}
+
+            forward_ops = cmd._resolve_rename_order(original_rename_map, temp_dir)
+            inverse_ops = cmd._resolve_rename_order(inverse_rename_map, temp_dir)
+
+            forward_phase1_count = sum(1 for op in forward_ops if op[0] == 'phase1')
+            forward_phase2_count = sum(1 for op in forward_ops if op[0] == 'phase2')
+            self.assertEqual(forward_phase1_count, 3)
+            self.assertEqual(forward_phase2_count, 3)
+
+            inverse_phase1_count = sum(1 for op in inverse_ops if op[0] == 'phase1')
+            inverse_phase2_count = sum(1 for op in inverse_ops if op[0] == 'phase2')
+            self.assertEqual(inverse_phase1_count, 3)
+            self.assertEqual(inverse_phase2_count, 3)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_inverse_rename_map_construction(self):
+        original_map = {'a.txt': 'A.txt', 'b.txt': 'B.txt', 'c.txt': 'C.txt'}
+        inverse_map = {new: old for old, new in original_map.items()}
+        expected = {'A.txt': 'a.txt', 'B.txt': 'b.txt', 'C.txt': 'c.txt'}
+        self.assertEqual(inverse_map, expected)
+
+    def test_swap_inverse_rename_map_construction(self):
+        original_map = {'a.txt': 'b.txt', 'b.txt': 'a.txt'}
+        inverse_map = {new: old for old, new in original_map.items()}
+        expected = {'b.txt': 'a.txt', 'a.txt': 'b.txt'}
+        self.assertEqual(inverse_map, expected)
+        self.assertEqual(inverse_map, original_map)
 
 
 class TestRegexErrorHandling(unittest.TestCase):

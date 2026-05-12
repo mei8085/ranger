@@ -1341,7 +1341,7 @@ class rename_pattern(Command):
     - Support for undoing the last batch of renames via :undo_rename
     """
 
-    _undo_operations = None
+    _undo_info = None
 
     def __init__(self, *args, **kwargs):
         super(rename_pattern, self).__init__(*args, **kwargs)
@@ -1411,7 +1411,6 @@ class rename_pattern(Command):
 
         operations = self._resolve_rename_order(rename_map, cwd)
 
-        undo_operations = []
         performed = []
         failed = False
 
@@ -1439,7 +1438,6 @@ class rename_pattern(Command):
 
                 if op_type == 'direct':
                     old_path = os.path.join(cwd, src_name)
-                    undo_operations.append((dst_path, old_path))
                     self.fm.bookmarks.update_path(old_path, new_fobj)
                     self.fm.tags.update_path(old_path, new_fobj.path)
                     performed.append(new_fobj)
@@ -1453,7 +1451,6 @@ class rename_pattern(Command):
                         if original_name and original_name in name_to_fobj:
                             original_fobj = name_to_fobj[original_name]
                             old_path = original_fobj.path
-                            undo_operations.append((dst_path, old_path))
                             self.fm.bookmarks.update_path(old_path, new_fobj)
                             self.fm.tags.update_path(old_path, new_fobj.path)
                             performed.append(new_fobj)
@@ -1469,7 +1466,12 @@ class rename_pattern(Command):
                 break
 
         if performed:
-            rename_pattern._undo_operations = list(reversed(undo_operations))
+            inverse_rename_map = {new_name: old_name for old_name, new_name in rename_map.items()}
+            rename_pattern._undo_info = {
+                'cwd': cwd,
+                'inverse_rename_map': inverse_rename_map,
+                'original_rename_map': rename_map
+            }
             self.fm.thisdir.pointed_obj = performed[0]
             self.fm.thisfile = performed[0]
             self.fm.notify('Renamed {0} file(s)'.format(len(performed)))
@@ -1675,22 +1677,76 @@ class undo_rename(Command):
     def execute(self):
         from ranger.container.file import File
 
-        operations = rename_pattern._undo_operations
-        if not operations:
+        undo_info = rename_pattern._undo_info
+        if not undo_info:
             return self.fm.notify('Nothing to undo', bad=True)
 
+        cwd = undo_info['cwd']
+        inverse_rename_map = undo_info['inverse_rename_map']
+
+        resolver_cmd = rename_pattern(':rename_pattern undo')
+        operations = resolver_cmd._resolve_rename_order(inverse_rename_map, cwd)
+
         undone = []
-        for new_path, old_path in reversed(operations):
-            new_fobj = File(new_path)
-            old_name = os.path.basename(old_path)
-            if self.fm.rename(new_fobj, old_name):
-                old_fobj = File(old_path)
-                self.fm.bookmarks.update_path(new_path, old_fobj)
-                self.fm.tags.update_path(new_path, old_fobj.path)
-                undone.append(old_fobj)
+        failed = False
+        tmp_to_current = {}
+        name_to_fobj = {}
+
+        for current_name in inverse_rename_map.keys():
+            from ranger.container.file import File as FObj
+            fobj = FObj(os.path.join(cwd, current_name))
+            name_to_fobj[current_name] = fobj
+
+        for step in operations:
+            op_type, src_name, dst_name = step
+            src_path = os.path.join(cwd, src_name)
+            dst_path = os.path.join(cwd, dst_name)
+
+            if src_name in name_to_fobj:
+                fobj = name_to_fobj[src_name]
+            elif src_name in tmp_to_current:
+                current_name = tmp_to_current[src_name]
+                fobj = name_to_fobj.get(current_name)
+                if fobj is None:
+                    from ranger.container.file import File as FObj
+                    fobj = FObj(src_path)
+            else:
+                from ranger.container.file import File as FObj
+                fobj = FObj(src_path)
+
+            if self.fm.rename(fobj, dst_name):
+                new_fobj = File(dst_path)
+
+                if op_type == 'direct':
+                    old_path = src_path
+                    self.fm.bookmarks.update_path(old_path, new_fobj)
+                    self.fm.tags.update_path(old_path, new_fobj.path)
+                    undone.append(new_fobj)
+                    name_to_fobj[dst_name] = new_fobj
+                elif op_type == 'phase1':
+                    tmp_to_current[dst_name] = src_name
+                    name_to_fobj[dst_name] = new_fobj
+                elif op_type == 'phase2':
+                    if src_name in resolver_cmd._internal_temp_names:
+                        current_name = tmp_to_current.get(src_name)
+                        if current_name and current_name in name_to_fobj:
+                            old_path = src_path
+                            self.fm.bookmarks.update_path(old_path, new_fobj)
+                            self.fm.tags.update_path(old_path, new_fobj.path)
+                            undone.append(new_fobj)
+                        name_to_fobj[dst_name] = new_fobj
+                    else:
+                        name_to_fobj[dst_name] = new_fobj
+            else:
+                failed = True
+                self.fm.notify(
+                    'Failed to undo rename: {0} -> {1}'.format(src_name, dst_name),
+                    bad=True
+                )
+                break
 
         if undone:
-            rename_pattern._undo_operations = None
+            rename_pattern._undo_info = None
             self.fm.thisdir.pointed_obj = undone[0]
             self.fm.thisfile = undone[0]
             self.fm.notify('Undid {0} rename(s)'.format(len(undone)))
