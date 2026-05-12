@@ -220,7 +220,7 @@ class TestBookmarkGroups:
 
     def test_group_delete_default_group_protected_error(self, setup_fm):
         fm = setup_fm
-        _run_bookmark_command(fm, "bookmark group delete {0}".format(DEFAULT_GROUP if DEFAULT_GROUP else "''"))
+        _run_bookmark_command(fm, "bookmark group delete default")
 
         msg, bad = fm.get_last_notification()
         assert "Cannot delete group (not found or is default)" in msg
