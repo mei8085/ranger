@@ -2135,3 +2135,176 @@ class paste_ext(Command):
 
     def execute(self):
         return self.fm.paste(make_safe_path=paste_ext.make_safe_path)
+
+
+class bookmark(Command):
+    """:bookmark <subcommand> [arguments]
+
+    Manage bookmarks with grouping and YAML export/import.
+
+    Subcommands:
+      export <filepath> [group]  - Export bookmarks to YAML file
+      import <filepath>          - Import bookmarks from YAML file
+      group create <name>        - Create a new bookmark group
+      group delete <name>        - Delete a bookmark group
+      group list                 - List all bookmark groups
+      add <key> <group>          - Add a bookmark to a group
+      remove <key> <group>       - Remove a bookmark from a group
+      list [group]               - List bookmarks (optionally filter by group)
+    """
+
+    def execute(self):
+        from ranger.container.bookmarks import HAS_YAML, DEFAULT_GROUP
+
+        subcommand = self.arg(1)
+        if not subcommand:
+            self.fm.notify(
+                "Usage: :bookmark <subcommand> [arguments]. "
+                "Use ':help bookmark' for more info.",
+                bad=True
+            )
+            return
+
+        if subcommand == 'export':
+            if not HAS_YAML:
+                self.fm.notify("PyYAML is required for YAML export", bad=True)
+                return
+            filepath = self.arg(2)
+            group = self.arg(3) if self.arg(3) else None
+            if not filepath:
+                self.fm.notify("Usage: :bookmark export <filepath> [group]", bad=True)
+                return
+            filepath = os.path.expanduser(filepath)
+            try:
+                result = self.fm.bookmarks.export_to_yaml(
+                    group_name=group, filepath=filepath
+                )
+                if group:
+                    self.fm.notify(
+                        "Exported group '{0}' bookmarks to {1}".format(group, result)
+                    )
+                else:
+                    self.fm.notify("Exported all bookmarks to {0}".format(result))
+            except Exception as e:
+                self.fm.notify("Export failed: {0}".format(str(e)), bad=True)
+
+        elif subcommand == 'import':
+            if not HAS_YAML:
+                self.fm.notify("PyYAML is required for YAML import", bad=True)
+                return
+            filepath = self.arg(2)
+            if not filepath:
+                self.fm.notify("Usage: :bookmark import <filepath>", bad=True)
+                return
+            filepath = os.path.expanduser(filepath)
+            if not os.path.exists(filepath):
+                self.fm.notify("File not found: {0}".format(filepath), bad=True)
+                return
+            try:
+                imported = self.fm.bookmarks.import_from_yaml(filepath, merge=True)
+                self.fm.notify(
+                    "Imported {0} bookmark(s) from {1}".format(
+                        len(imported), filepath
+                    )
+                )
+            except Exception as e:
+                self.fm.notify("Import failed: {0}".format(str(e)), bad=True)
+
+        elif subcommand == 'group':
+            action = self.arg(2)
+            if action == 'create':
+                group_name = self.arg(3)
+                if not group_name:
+                    self.fm.notify("Usage: :bookmark group create <name>", bad=True)
+                    return
+                if self.fm.bookmarks.create_group(group_name):
+                    self.fm.notify("Created group: {0}".format(group_name))
+                else:
+                    self.fm.notify("Group already exists: {0}".format(group_name), bad=True)
+            elif action == 'delete':
+                group_name = self.arg(3)
+                if not group_name:
+                    self.fm.notify("Usage: :bookmark group delete <name>", bad=True)
+                    return
+                if self.fm.bookmarks.delete_group(group_name):
+                    self.fm.notify("Deleted group: {0}".format(group_name))
+                else:
+                    self.fm.notify(
+                        "Cannot delete group (not found or is default)",
+                        bad=True
+                    )
+            elif action == 'list':
+                groups = self.fm.bookmarks.list_groups()
+                if groups:
+                    self.fm.notify("Groups: {0}".format(", ".join(sorted(groups))))
+                else:
+                    self.fm.notify("No bookmark groups")
+            else:
+                self.fm.notify(
+                    "Usage: :bookmark group <create|delete|list> [name]",
+                    bad=True
+                )
+
+        elif subcommand == 'add':
+            key = self.arg(2)
+            group_name = self.arg(3)
+            if not key or not group_name:
+                self.fm.notify("Usage: :bookmark add <key> <group>", bad=True)
+                return
+            if self.fm.bookmarks.add_to_group(key, group_name):
+                self.fm.notify(
+                    "Added bookmark '{0}' to group '{1}'".format(key, group_name)
+                )
+            else:
+                self.fm.notify(
+                    "Bookmark '{0}' not found".format(key), bad=True
+                )
+
+        elif subcommand == 'remove':
+            key = self.arg(2)
+            group_name = self.arg(3)
+            if not key or not group_name:
+                self.fm.notify("Usage: :bookmark remove <key> <group>", bad=True)
+                return
+            if self.fm.bookmarks.remove_from_group(key, group_name):
+                self.fm.notify(
+                    "Removed bookmark '{0}' from group '{1}'".format(key, group_name)
+                )
+            else:
+                self.fm.notify(
+                    "Bookmark '{0}' not in group '{1}'".format(key, group_name),
+                    bad=True
+                )
+
+        elif subcommand == 'list':
+            group_name = self.arg(2)
+            if group_name:
+                bms = self.fm.bookmarks.get_group_bookmarks(group_name)
+                if bms:
+                    items = ["{0}: {1}".format(k, v) for k, v in sorted(bms.items())]
+                    self.fm.notify(
+                        "Bookmarks in '{0}': {1}".format(group_name, ", ".join(items))
+                    )
+                else:
+                    self.fm.notify("No bookmarks in group '{0}'".format(group_name))
+            else:
+                all_groups = self.fm.bookmarks.list_groups()
+                lines = []
+                for group in sorted(all_groups):
+                    bms = self.fm.bookmarks.get_group_bookmarks(group)
+                    if bms:
+                        items = ["{0}: {1}".format(k, v) for k, v in sorted(bms.items())]
+                        group_name = group if group else "(default)"
+                        lines.append("{0}: {1}".format(group_name, ", ".join(items)))
+                if lines:
+                    self.fm.notify(" | ".join(lines))
+                else:
+                    self.fm.notify("No bookmarks")
+
+        else:
+            self.fm.notify(
+                "Unknown subcommand: {0}. Use ':help bookmark' for help.".format(
+                    subcommand
+                ),
+                bad=True
+            )

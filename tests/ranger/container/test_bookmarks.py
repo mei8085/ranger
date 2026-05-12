@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from ranger.container.bookmarks import Bookmarks
+from ranger.container.bookmarks import Bookmarks, DEFAULT_GROUP, HAS_YAML
 
 
 class NotValidatedBookmarks(Bookmarks):
@@ -78,3 +78,299 @@ def test_bookmark_symlink(tmpdir):
     # Once saved, the bookmark file should still be a symlink pointing towards the plain file.
     assert os.path.islink(str(bookmarkfile_link))
     assert not os.path.islink(str(bookmarkfile_orig))
+
+
+class TestBookmarkGroups:
+    def test_default_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        assert DEFAULT_GROUP in bmstore.groups
+        assert "a" in bmstore.groups[DEFAULT_GROUP]
+        assert "b" in bmstore.groups[DEFAULT_GROUP]
+
+    def test_create_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        assert bmstore.create_group("work")
+        assert "work" in bmstore.list_groups()
+
+        assert not bmstore.create_group("work")
+
+    def test_add_to_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        bmstore.create_group("work")
+
+        assert bmstore.add_to_group("a", "work")
+        assert "a" in bmstore.groups["work"]
+        assert "a" not in bmstore.groups[DEFAULT_GROUP]
+
+        assert bmstore.add_to_group("b", "work")
+        assert "b" in bmstore.groups["work"]
+
+        assert not bmstore.add_to_group("z", "work")
+
+        assert bmstore.add_to_group("a", "new_group")
+        assert "a" in bmstore.groups["new_group"]
+        assert "a" not in bmstore.groups["work"]
+
+    def test_get_bookmark_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+
+        assert bmstore.get_bookmark_group("a") == "work"
+        assert bmstore.get_bookmark_group("b") == DEFAULT_GROUP
+        assert bmstore.get_bookmark_group("z") is None
+
+    def test_get_group_bookmarks(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+        bmstore["c"] = "/path/c"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+        bmstore.add_to_group("b", "work")
+
+        work_bookmarks = bmstore.get_group_bookmarks("work")
+        assert "a" in work_bookmarks
+        assert "b" in work_bookmarks
+        assert "c" not in work_bookmarks
+
+        default_bookmarks = bmstore.get_group_bookmarks(DEFAULT_GROUP)
+        assert "c" in default_bookmarks
+
+    def test_remove_from_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+
+        assert bmstore.remove_from_group("a", "work")
+        assert "a" in bmstore.groups[DEFAULT_GROUP]
+        assert "a" not in bmstore.groups["work"]
+
+        assert not bmstore.remove_from_group("a", "work")
+        assert not bmstore.remove_from_group("a", DEFAULT_GROUP)
+
+    def test_delete_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+        bmstore.add_to_group("b", "work")
+
+        assert bmstore.delete_group("work")
+        assert "work" not in bmstore.list_groups()
+        assert "a" in bmstore.groups[DEFAULT_GROUP]
+        assert "b" in bmstore.groups[DEFAULT_GROUP]
+
+        assert not bmstore.delete_group(DEFAULT_GROUP)
+        assert not bmstore.delete_group("non_existent")
+
+    def test_list_groups(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        groups = bmstore.list_groups()
+        assert DEFAULT_GROUP in groups
+
+        bmstore.create_group("work")
+        bmstore.create_group("personal")
+
+        groups = bmstore.list_groups()
+        assert "work" in groups
+        assert "personal" in groups
+
+
+@pytest.mark.skipif(not HAS_YAML, reason="PyYAML is not installed")
+class TestBookmarkYaml:
+    def test_export_import_single_group(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+        bmstore["c"] = "/path/c"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+        bmstore.add_to_group("b", "work")
+
+        export_file = tmpdir.join("export.yaml")
+        bmstore.export_to_yaml(group_name="work", filepath=str(export_file))
+
+        bmstore2 = NotValidatedBookmarks(str(tmpdir.join("bookmarkfile2")))
+        bmstore2.load()
+
+        imported = bmstore2.import_from_yaml(str(export_file), merge=True)
+        assert len(imported) == 2
+
+        assert "a" in bmstore2
+        assert "b" in bmstore2
+        assert "c" not in bmstore2
+        assert "work" in bmstore2.list_groups()
+        assert bmstore2.get_bookmark_group("a") == "work"
+
+    def test_export_import_all_groups(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+        bmstore["c"] = "/path/c"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+
+        bmstore.create_group("personal")
+        bmstore.add_to_group("b", "personal")
+
+        export_file = tmpdir.join("export.yaml")
+        bmstore.export_to_yaml(filepath=str(export_file))
+
+        bmstore2 = NotValidatedBookmarks(str(tmpdir.join("bookmarkfile2")))
+        bmstore2.load()
+
+        imported = bmstore2.import_from_yaml(str(export_file), merge=True)
+        assert len(imported) == 3
+
+        assert "a" in bmstore2
+        assert "b" in bmstore2
+        assert "c" in bmstore2
+        assert "work" in bmstore2.list_groups()
+        assert "personal" in bmstore2.list_groups()
+        assert bmstore2.get_bookmark_group("a") == "work"
+        assert bmstore2.get_bookmark_group("b") == "personal"
+        assert bmstore2.get_bookmark_group("c") == DEFAULT_GROUP
+
+    def test_import_merge(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        export_file = tmpdir.join("export.yaml")
+        bmstore.export_to_yaml(filepath=str(export_file))
+
+        bmstore2 = NotValidatedBookmarks(str(tmpdir.join("bookmarkfile2")))
+        bmstore2.load()
+        bmstore2["c"] = "/path/c"
+
+        imported = bmstore2.import_from_yaml(str(export_file), merge=True)
+        assert len(imported) == 2
+
+        assert "a" in bmstore2
+        assert "b" in bmstore2
+        assert "c" in bmstore2
+
+    def test_import_replace(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        export_file = tmpdir.join("export.yaml")
+        bmstore.export_to_yaml(filepath=str(export_file))
+
+        bmstore2 = NotValidatedBookmarks(str(tmpdir.join("bookmarkfile2")))
+        bmstore2.load()
+        bmstore2["c"] = "/path/c"
+
+        imported = bmstore2.import_from_yaml(str(export_file), merge=False)
+        assert len(imported) == 2
+
+        assert "a" in bmstore2
+        assert "b" in bmstore2
+        assert "c" not in bmstore2
+
+    def test_export_to_string(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+
+        yaml_str = bmstore.export_to_yaml()
+        assert isinstance(yaml_str, str)
+        assert "a" in yaml_str
+        assert "/path/a" in yaml_str
+
+
+class TestBookmarkPersistence:
+    def test_save_load_with_groups(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+
+        bmstore.save()
+
+        bmstore2 = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore2.load()
+
+        assert "a" in bmstore2
+        assert "b" in bmstore2
+
+        if HAS_YAML:
+            assert bmstore2.get_bookmark_group("a") == "work"
+            assert bmstore2.get_bookmark_group("b") == DEFAULT_GROUP
+
+    def test_delete_updates_groups(self, tmpdir):
+        bookmarkfile = tmpdir.join("bookmarkfile")
+        bmstore = NotValidatedBookmarks(str(bookmarkfile))
+        bmstore.load()
+
+        bmstore["a"] = "/path/a"
+        bmstore["b"] = "/path/b"
+
+        bmstore.create_group("work")
+        bmstore.add_to_group("a", "work")
+
+        del bmstore["a"]
+
+        assert "a" not in bmstore.groups["work"]
+        assert "a" not in bmstore
