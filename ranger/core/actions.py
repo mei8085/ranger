@@ -26,6 +26,7 @@ from ranger.container.directory import Directory
 from ranger.container.file import File
 from ranger.container.settings import ALLOWED_SETTINGS, ALLOWED_VALUES
 from ranger.core.loader import CommandLoader, CopyLoader
+from ranger.core.preview_plugin import preview_plugin_registry
 from ranger.core.shared import FileManagerAware, SettingsAware
 from ranger.core.tab import Tab
 from ranger.ext.direction import Direction
@@ -1139,6 +1140,56 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
             data['loading'] = False
             return cacheimg
 
+        plugin_result = preview_plugin_registry.render(
+            path, width, height, cacheimg, self.settings.preview_images
+        )
+        if plugin_result is not None:
+            content, rcode = plugin_result
+            data['foundpreview'] = True
+
+            if rcode == 0:
+                data[(width, height)] = content
+            elif rcode == 3:
+                data[(-1, height)] = content
+            elif rcode == 4:
+                data[(width, -1)] = content
+            elif rcode == 5:
+                data[(-1, -1)] = content
+            elif rcode == 6:
+                data['imagepreview'] = True
+            elif rcode == 7:
+                data['directimagepreview'] = True
+            elif rcode == 1:
+                data[(-1, -1)] = None
+                data['foundpreview'] = False
+            elif rcode == 2:
+                text = self.read_text_file(path, 1024 * 32)
+                if text is not None and not isinstance(text, str):
+                    text = text.encode('utf-8')
+                data[(-1, -1)] = text
+            else:
+                data[(-1, -1)] = None
+
+            data['loading'] = False
+
+            if 'imagepreview' in data:
+                pager.set_image(cacheimg)
+                return cacheimg
+            elif 'directimagepreview' in data:
+                pager.set_image(path)
+                return path
+            else:
+                found = data.get(
+                    (-1, -1), data.get(
+                        (width, -1), data.get(
+                            (-1, height), data.get(
+                                (width, height), False
+                            )
+                        )
+                    )
+                )
+                return found
+
         def on_after(signal):
             rcode = signal.process.poll()
             content = signal.loader.stdout_buffer
@@ -1162,7 +1213,6 @@ class Actions(  # pylint: disable=too-many-instance-attributes,too-many-public-m
             elif rcode == 2:
                 text = self.read_text_file(path, 1024 * 32)
                 if text is not None and not isinstance(text, str):
-                    # Convert 'unicode' to 'str' in Python 2
                     text = text.encode('utf-8')
                 data[(-1, -1)] = text
             else:
