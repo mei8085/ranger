@@ -254,3 +254,220 @@ class TestPreviewPluginIntegration(object):
         assert len(registry.get_renderers('/path/to/file.JSON')) == 1
         assert len(registry.get_renderers('/path/to/file.Json')) == 1
         assert len(registry.get_renderers('/path/to/file.json')) == 1
+
+
+class TestPluginPriorityAndScopeSHFallback(object):
+    def test_plugin_takes_precedence_over_scope_sh(self):
+        registry = PreviewPluginRegistry()
+
+        def python_plugin(**kwargs):
+            return ('from python plugin', 0)
+
+        registry.register(python_plugin, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 0
+        assert content == 'from python plugin'
+
+    def test_plugin_returns_none_allows_scope_sh_fallback(self):
+        registry = PreviewPluginRegistry()
+
+        def plugin_that_declines(**kwargs):
+            return None
+
+        registry.register(plugin_that_declines, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is None
+
+    def test_no_plugins_matches_returns_none_for_scope_sh_fallback(self):
+        registry = PreviewPluginRegistry()
+
+        def json_renderer(**kwargs):
+            return ('json content', 0)
+
+        registry.register(json_renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.txt', 80, 24, '/cache/img.jpg', False)
+        assert result is None
+
+    def test_higher_priority_plugin_takes_precedence(self):
+        registry = PreviewPluginRegistry()
+        order_called = []
+
+        def low_priority(**kwargs):
+            order_called.append('low')
+            return ('low priority', 0)
+
+        def high_priority(**kwargs):
+            order_called.append('high')
+            return ('high priority', 0)
+
+        registry.register(low_priority, file_patterns='json', priority=0)
+        registry.register(high_priority, file_patterns='json', priority=10)
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 0
+        assert content == 'high priority'
+        assert order_called == ['high']
+
+    def test_plugin_with_exit_code_1_no_preview(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return (None, 1)
+
+        registry.register(renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 1
+        assert content is None
+
+    def test_plugin_with_exit_code_2_plain_text(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return (None, 2)
+
+        registry.register(renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 2
+
+    def test_plugin_with_exit_code_3_fix_width(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return ('fix width', 3)
+
+        registry.register(renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 3
+        assert content == 'fix width'
+
+    def test_plugin_with_exit_code_4_fix_height(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return ('fix height', 4)
+
+        registry.register(renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 4
+        assert content == 'fix height'
+
+    def test_plugin_with_exit_code_5_fix_both(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return ('fix both', 5)
+
+        registry.register(renderer, file_patterns='json')
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 5
+        assert content == 'fix both'
+
+    def test_plugin_with_exit_code_6_image_cache(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return (None, 6)
+
+        registry.register(renderer, file_patterns='png')
+
+        result = registry.render('/path/to/file.png', 80, 24, '/cache/img.jpg', True)
+        assert result is not None
+        content, code = result
+        assert code == 6
+        assert content is None
+
+    def test_plugin_with_exit_code_7_direct_image(self):
+        registry = PreviewPluginRegistry()
+
+        def renderer(**kwargs):
+            return (None, 7)
+
+        registry.register(renderer, file_patterns='jpg')
+
+        result = registry.render('/path/to/file.jpg', 80, 24, '/cache/img.jpg', True)
+        assert result is not None
+        content, code = result
+        assert code == 7
+        assert content is None
+
+    def test_multiple_plugins_declines_until_one_handles(self):
+        registry = PreviewPluginRegistry()
+        order_called = []
+
+        def first(**kwargs):
+            order_called.append('first')
+            return None
+
+        def second(**kwargs):
+            order_called.append('second')
+            return None
+
+        def third(**kwargs):
+            order_called.append('third')
+            return ('handled by third', 0)
+
+        registry.register(first, file_patterns='json', priority=30)
+        registry.register(second, file_patterns='json', priority=20)
+        registry.register(third, file_patterns='json', priority=10)
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 0
+        assert content == 'handled by third'
+        assert order_called == ['first', 'second', 'third']
+
+    def test_all_plugins_decline_returns_none_for_scope_sh(self):
+        registry = PreviewPluginRegistry()
+
+        def first(**kwargs):
+            return None
+
+        def second(**kwargs):
+            return None
+
+        registry.register(first, file_patterns='json', priority=10)
+        registry.register(second, file_patterns='json', priority=5)
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is None
+
+    def test_plugin_exception_does_not_block_others(self):
+        registry = PreviewPluginRegistry()
+
+        def bad_plugin(**kwargs):
+            raise RuntimeError('something went wrong')
+
+        def good_plugin(**kwargs):
+            return ('good plugin result', 0)
+
+        registry.register(bad_plugin, file_patterns='json', priority=10)
+        registry.register(good_plugin, file_patterns='json', priority=5)
+
+        result = registry.render('/path/to/file.json', 80, 24, '/cache/img.jpg', False)
+        assert result is not None
+        content, code = result
+        assert code == 0
+        assert content == 'good plugin result'
